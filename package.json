@@ -41,6 +41,8 @@
     "locale/*.json",
     "docs/*.md",
     "docs/dictation-demo.gif",
+    "docs/gesture-overview.svg",
+    "docs/gesture-overview.zh.svg",
     "docs/settings-user.png",
     "docs/settings-user-2.png",
     "README.md",

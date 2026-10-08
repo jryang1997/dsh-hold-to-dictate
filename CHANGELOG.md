@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Both READMEs are rewritten for a first-time reader.** The install path now starts with the
+  two things that have to be in place before the plugin can do anything (the official voice-input
+  module and a prepared local model), because a missing module makes the plugin register nothing
+  and leaves no message on screen. Settings are a table with defaults and ranges read off the
+  schema instead of prose, and a troubleshooting table names the four failures a user actually
+  hits and what to do about each.
+- Badges for CI, the latest tag and the licence, and a three-step gesture diagram that both
+  READMEs now show above the fold: English uses the existing `docs/gesture-overview.svg`, and
+  Chinese gets a translated copy.
+
+### Added
+
+- `docs/gesture-overview.zh.svg`, a Chinese counterpart to the existing gesture diagram.
+- `package.json` `files` entries for both gesture diagrams. Neither was shipped before; the
+  English one was in the repository but unreferenced, and `tests/package.test.mjs` fails when a
+  README points at a file the tarball does not carry.
+
 ## [2.2.0] - 2026-10-08
 
 ### Added

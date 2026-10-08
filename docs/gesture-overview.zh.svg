@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="176" viewBox="0 0 840 176" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">按住说话</title>
+  <desc id="desc">手势示意图：按住、说话、松开。识别出的文字进入草稿。</desc>
+  <g stroke="#8b949e" stroke-opacity=".35" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M246 64h78m-6-5 6 5-6 5M516 64h78m-6-5 6 5-6 5"/>
+  </g>
+  <g transform="translate(154 64)">
+    <circle r="29" fill="#4d6bfe" fill-opacity=".06"/>
+    <circle r="29" stroke="#4d6bfe" stroke-opacity=".18" stroke-width="2"/>
+    <path d="M0-29a29 29 0 0 1 29 29" stroke="#4d6bfe" stroke-width="2" stroke-linecap="round"/>
+    <path d="m-7-12 23 18-12 2-6 11z" fill="#4d6bfe"/>
+  </g>
+  <rect x="350" y="38" width="140" height="52" rx="26" fill="#8b949e" fill-opacity=".055" stroke="#8b949e" stroke-opacity=".18"/>
+  <circle cx="370" cy="64" r="3.5" fill="#4d6bfe"/>
+  <g stroke="#4d6bfe" stroke-width="2.5" stroke-linecap="round">
+    <path d="M390 63v2m7-5v8m7-12v16m7-8v0m7-15v30m7-21v12m7-26v40m7-31v22m7-17v12m7-11v10m7-15v20m7-12v4"/>
+  </g>
+  <rect x="630" y="34" width="112" height="60" rx="15" fill="#8b949e" fill-opacity=".055" stroke="#8b949e" stroke-opacity=".2"/>
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <path d="m645 59 4 4 8-9" stroke="#4d6bfe" stroke-width="2"/>
+    <path d="M666 59h59m-80 13h69" stroke="#8b949e" stroke-opacity=".55" stroke-width="2"/>
+  </g>
+  <g fill="#8b949e" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif">
+    <text x="154" y="124" font-size="15" font-weight="500">按住</text>
+    <text x="420" y="124" font-size="15" font-weight="500">说话</text>
+    <text x="686" y="124" font-size="15" font-weight="500">松开</text>
+    <g font-size="11" fill-opacity=".85">
+      <text x="154" y="144">约 0.3 秒</text>
+      <text x="420" y="144">语音识别</text>
+      <text x="686" y="144">文字进草稿</text>
+    </g>
+  </g>
+</svg>
