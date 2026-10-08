@@ -39,7 +39,10 @@ If you add a surface, add its exit here too.
 
 `tests/live.test.mjs` exercises the registered slot through the audio and speech-service
 boundaries: provisional and final draft updates, guarded rollback, manual edits, slow
-responses, cancellation, retry and one-shot fallback.
+responses, cancellation, retry and one-shot fallback. It also pins the refresh cadence — a
+reply's own round trip sets the next wait, a failure backs off, a starved first preview retries
+rather than ending the loop, and a long take commits at a sentence-length pause but never at a
+short one.
 
 ## Two rules that are easy to break
 

@@ -53,7 +53,29 @@ window.__ModuleLoader__.load({
 		const MAX_SECONDS = 110;
 		/** Kept below the Host default (4 MiB) so the Host never rejects on size. */
 		const MAX_BYTES = 4 * 1024 * 1024 - 4096;
-		const LIVE_INTERVAL_MS = 1000;
+		/**
+		 * Live-preview cadence. The transcript grows a few characters a second, so refreshing
+		 * tighter than this only re-renders text that has not changed yet.
+		 */
+		const LIVE_MIN_INTERVAL_MS = 250;
+		/** Ceiling for the retry backoff after a failed preview. */
+		const LIVE_MAX_BACKOFF_MS = 2500;
+		/** Target interval as a multiple of the measured round trip, keeping the worker ~85% busy. */
+		const LIVE_INTERVAL_SLACK = 1.15;
+		/** Once a preview costs this much, stop re-reading the whole take and commit at pauses. */
+		const LIVE_SEGMENT_AFTER_MS = 700;
+		/** A pause at least this long marks a sentence break worth committing at. */
+		const LIVE_PAUSE_SECONDS = 0.8;
+		/** A chunk is silence below this fraction of the loudest chunk heard so far. */
+		const LIVE_PAUSE_LEVEL_RATIO = 0.06;
+		/** Absolute floor for that test, so a very quiet room still counts its speech as speech. */
+		const LIVE_PAUSE_LEVEL_FLOOR = 0.002;
+		/** A segment is only worth committing once it is at least this long. */
+		const LIVE_SEGMENT_MIN_SECONDS = 1;
+		/** How soon to look again while the worklet still holds less than MIN_SECONDS of audio. */
+		const LIVE_STARVE_RETRY_MS = 120;
+		/** Consecutive starved previews tolerated before live mode gives up on the worklet. */
+		const LIVE_STARVE_LIMIT = 12;
 		/** How long a transient surface takes to leave, and how long the press ring retracts. */
 		const EXIT_MS = 180;
 		const RING_EXIT_MS = 140;
@@ -127,6 +149,12 @@ window.__ModuleLoader__.load({
 			'Control+Alt+Space': { ctrl: true, shift: false, alt: true, code: 'Space', label: 'Ctrl + Alt + Space' },
 		};
 
+		/** Which dictionary key names each recognizer language, in schema order. */
+		const LANGUAGE_LABELS = {
+			host: 'languageHost', zh: 'languageZh', en: 'languageEn',
+			yue: 'languageYue', ja: 'languageJa', ko: 'languageKo',
+		};
+
 		/** The schema: every knob, what a fresh install runs, and how it is offered. */
 		const CONFIG_FIELDS = {
 			holdMs: { fallback: HOLD_MS, min: 150, max: 800, step: 10, kind: 'number' },
@@ -135,6 +163,7 @@ window.__ModuleLoader__.load({
 			hint: { fallback: true, kind: 'switch' },
 			chord: { fallback: 'Control+Shift+Space', oneOf: Object.keys(CHORDS), kind: 'choice' },
 			live: { fallback: false, kind: 'switch' },
+			language: { fallback: 'host', oneOf: ['host', 'zh', 'en', 'yue', 'ja', 'ko'], kind: 'choice' },
 		};
 
 		const configDefaults = () => Object.fromEntries(
@@ -303,6 +332,14 @@ window.__ModuleLoader__.load({
 			chordOff: '关闭',
 			liveLabel: '边说边出字（实验）',
 			liveHint: '录音时滚动识别，文字可能修正；松开后整段定稿。仅对本地语音服务启用。',
+			languageLabel: '识别语言',
+			languageHint: '「跟随宿主」由 Harness 每次自己判断语种，固定成你实际说的语言可以省掉这一步；实测多数长度下更快，也可能持平。',
+			languageHost: '跟随宿主',
+			languageZh: '中文',
+			languageEn: '英文',
+			languageYue: '粤语',
+			languageJa: '日文',
+			languageKo: '韩文',
 			settingsReset: '恢复默认',
 			settingsLocal: '单位：毫秒',
 		};
@@ -347,6 +384,14 @@ window.__ModuleLoader__.load({
 			chordOff: 'Off',
 			liveLabel: 'Live dictation (experimental)',
 			liveHint: 'Recognize while recording; words may be revised. Release to finalize the whole recording. Local speech providers only.',
+			languageLabel: 'Recognition language',
+			languageHint: '"Host decides" makes Harness detect the language on every request; naming what you actually speak skips that step. Measured faster at most lengths, and never slower.',
+			languageHost: 'Host decides',
+			languageZh: 'Chinese',
+			languageEn: 'English',
+			languageYue: 'Cantonese',
+			languageJa: 'Japanese',
+			languageKo: 'Korean',
 			settingsReset: 'Restore defaults',
 			settingsLocal: 'milliseconds',
 		};
@@ -449,6 +494,12 @@ window.__ModuleLoader__.load({
 			let analyser = null;
 			let failure = null;
 			let released = false;
+			// Pause structure, counted in the same sample frames as the audio itself, so a commit
+			// point can never drift away from what the recognizer was actually sent.
+			let checkpointFrame = 0;
+			let quietFrom = 0;
+			let quiet = false;
+			let loudest = 0;
 
 			const release = () => {
 				if (released) return;
@@ -527,6 +578,22 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 								const chunk = data.subarray(0, Math.max(0, Math.floor(context.sampleRate * MAX_SECONDS) - frames));
 								if (chunk.length === 0) return;
 								pcm.push(chunk); frames += chunk.length;
+								let energy = 0;
+								for (const sample of chunk) energy += sample * sample;
+								const level = Math.sqrt(energy / chunk.length);
+								if (level > loudest) loudest = level;
+								const held = Math.max(loudest * LIVE_PAUSE_LEVEL_RATIO, LIVE_PAUSE_LEVEL_FLOOR);
+								if (level < held) {
+									if (!quiet) { quiet = true; quietFrom = frames - chunk.length; }
+								} else {
+									// The run just ended; only a sentence-length one is worth committing at,
+									// and it is cut down the middle so a small clock offset cannot land on a
+									// word.
+									if (quiet && frames - chunk.length - quietFrom >= context.sampleRate * LIVE_PAUSE_SECONDS) {
+										checkpointFrame = Math.round((quietFrom + frames - chunk.length) / 2);
+									}
+									quiet = false;
+								}
 							};
 							source.connect(worklet);
 							// The processor has silent outputs; keeping it connected keeps capture live.
@@ -550,21 +617,35 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					});
 					recorder.start(200);
 				},
-				async snapshot() {
+				/**
+				 * Encode the recording, or one window of it, as the canonical WAV the Host validates.
+				 *
+				 * `from` and `to` are audio seconds and default to the whole take. Segmented live
+				 * dictation reads only the window since its last commit, which is what stops a long
+				 * recording from re-reading all of itself on every refresh.
+				 */
+				async snapshot(from = 0, to = null) {
 					if (released || frames < context.sampleRate * MIN_SECONDS) return null;
 					const samples = new Float32Array(frames);
 					let offset = 0;
 					for (const chunk of pcm) { samples.set(chunk, offset); offset += chunk.length; }
 					const rate = context.sampleRate;
-					if (rate === 16000) return { buffer: encodeWave(samples), seconds: frames / rate };
-					const offline = new OfflineAudioContext(1, Math.round(samples.length * 16000 / rate), 16000);
-					const buffer = offline.createBuffer(1, samples.length, rate);
-					buffer.copyToChannel(samples, 0);
+					const start = Math.max(0, Math.min(frames - 1, Math.round(from * rate)));
+					const end = to === null ? frames : Math.max(start + 1, Math.min(frames, Math.round(to * rate)));
+					const slice = start === 0 && end === frames ? samples : samples.subarray(start, end);
+					const seconds = (end - start) / rate;
+					const window = { seconds, from: start / rate, to: end / rate };
+					if (rate === 16000) return { buffer: encodeWave(slice), ...window };
+					const offline = new OfflineAudioContext(1, Math.round(slice.length * 16000 / rate), 16000);
+					const buffer = offline.createBuffer(1, slice.length, rate);
+					buffer.copyToChannel(slice, 0);
 					const node = offline.createBufferSource();
 					node.buffer = buffer; node.connect(offline.destination); node.start(0);
 					const rendered = await offline.startRendering();
-					return { buffer: encodeWave(rendered.getChannelData(0)), seconds: rendered.duration };
+					return { buffer: encodeWave(rendered.getChannelData(0)), ...window };
 				},
+				/** Audio second of the newest sentence-length pause, or 0 when there has not been one. */
+				checkpoint() { return checkpointFrame / context.sampleRate; },
 				/**
 				 * RMS amplitude of the current frame — the same measure the shipped voice input
 				 * uses, and deliberately *unclamped*: the waveform applies its own gain when it
@@ -1298,6 +1379,30 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					),
 				),
 				row(
+					'language',
+					t('languageLabel'),
+					t('languageHint'),
+					h(
+						'div',
+						{ className: 'dsh-htt-set-group', role: 'radiogroup', 'aria-label': t('languageLabel') },
+						CONFIG_FIELDS.language.oneOf.map((option) =>
+							h(
+								'button',
+								{
+									type: 'button',
+									key: option,
+									className: 'dsh-htt-set-segment',
+									role: 'radio',
+									'aria-checked': values.language === option ? 'true' : 'false',
+									'data-on': values.language === option ? '' : undefined,
+									onClick: () => config.set('language', option),
+								},
+								t(LANGUAGE_LABELS[option]),
+							),
+						),
+					),
+				),
+				row(
 					'live', t('liveLabel'), t('liveHint'),
 					h('button', {
 						type: 'button', className: 'dsh-htt-set-toggle',
@@ -1384,6 +1489,28 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				conflict = false;
 				return write(original);
 			} };
+		}
+
+		/**
+		 * The language hint to send, or undefined to let the Host decide for itself.
+		 *
+		 * A provider rejects a language it does not advertise outright — the call fails rather than
+		 * falling back — so the chosen value is filtered against what the selected provider lists.
+		 * A fixed language also skips the Host's own detection pass, which measured about 2.5x the
+		 * inference cost of a fixed one against the shipped local recognizer.
+		 */
+		function transcribeLanguage() {
+			const chosen = config.get('language');
+			if (chosen === 'host') return undefined;
+			const provider = runtime.limits?.providers?.find((entry) => entry.id === runtime.limits.selection?.providerId);
+			return provider?.languages?.includes(chosen) ? chosen : undefined;
+		}
+
+		/** One transcribe request body, carrying the language hint the selected provider can take. */
+		function transcribeRequest(audio) {
+			const language = transcribeLanguage();
+			const audioBase64 = toBase64(audio.buffer);
+			return language === undefined ? { audioBase64 } : { audioBase64, language };
 		}
 
 		/** Prefer the entry's injected `transcribe`; fall back to the Remote captured at activation. */
@@ -1501,6 +1628,13 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				const state = {
 					liveDraft: null,
 					liveTimer: 0,
+					liveWait: LIVE_STARVE_RETRY_MS,
+					liveInterval: LIVE_MIN_INTERVAL_MS,
+					liveStarved: 0,
+					liveSegmented: false,
+					liveCommitted: '',
+					liveAnchor: 0,
+					liveAnchorAtPause: false,
 					preview: null,
 					timer: 0,
 					limit: 0,
@@ -1917,6 +2051,13 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					state.retry = null;
 					state.span = actions.captureInsertion();
 					state.preview = null;
+					state.liveWait = LIVE_STARVE_RETRY_MS;
+					state.liveInterval = LIVE_MIN_INTERVAL_MS;
+					state.liveStarved = 0;
+					state.liveSegmented = false;
+					state.liveCommitted = '';
+					state.liveAnchor = 0;
+					state.liveAnchorAtPause = false;
 					const provider = runtime.limits?.providers?.find((provider) => provider.id === runtime.limits.selection?.providerId);
 					state.liveDraft = config.get('live') && provider?.location === 'host-local'
 						? createLiveDraft(actions, latest.current.input, state.span, () => latest.current.input) : null;
@@ -1967,33 +2108,90 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					}
 				}
 
+				/**
+				 * One preview at a time, as fast as the Host actually answers.
+				 *
+				 * The Host exposes a single unary `transcribe`, so live dictation means re-sending the
+				 * growing recording and replacing the provisional words. Its cost is almost entirely
+				 * the Host's inference, which is linear in the audio: measured against the shipped
+				 * worker at roughly 150 ms fixed plus ~0.15 s per audio second, so a 2-second prefix
+				 * comes back in about 0.3 s and a 16-second one in about 1.2 s.
+				 *
+				 * None of that is ours to throttle. The wait is set so the interval between requests
+				 * lands just above the round trip we just measured — the timer only starts once the
+				 * reply arrives, so the interval is the wait *plus* that round trip, not the wait
+				 * alone. A floor keeps a short recording from re-rendering text that has not grown;
+				 * past it the recognizer sets its own pace, however long the take runs.
+				 */
 				function schedulePreview(capture, run) {
-					// As the prefix grows, reduce repeated inference on long dictations.
-					const delay = Math.max(LIVE_INTERVAL_MS, Math.min(5000, state.elapsed * 50));
+					const period = state.liveWait;
 					state.liveTimer = window.setTimeout(() => {
 						state.liveTimer = 0;
 						if (run !== state.run || !state.active) return;
-						// ponytail: complete prefixes repeat work up to the 110s cap; sentence
-						// checkpoints are the upgrade if measured long-dictation CPU cost matters.
+						const startedAt = performance.now();
 						state.preview = (async () => {
 							try {
-								const audio = await capture.snapshot();
-								if (!audio || run !== state.run || !state.active) return false;
-								if (audio.buffer.byteLength > Math.min(MAX_BYTES, runtime.limits?.maxAudioBytes ?? MAX_BYTES)) return false;
+								// Once a whole-take preview is expensive, stop re-reading the take: commit
+								// at the last sentence-length pause and read forward from there. The
+								// window only starts at a commit point, and a commit point is the middle
+								// of a pause, so a segment never begins on a cut through a word. Until the
+								// first commit the window is still the whole take, and a take with no
+								// sentence-length pause never commits at all.
+								const at = state.liveSegmented ? capture.checkpoint() : 0;
+								const committing = state.liveSegmented && at > state.liveAnchor + LIVE_SEGMENT_MIN_SECONDS;
+								const whole = !state.liveAnchorAtPause;
+								const audio = await capture.snapshot(whole ? 0 : state.liveAnchor, committing ? at : null);
+								if (run !== state.run || !state.active) return 'stop';
+								// The first previews are deliberately early. The worklet holds nothing
+								// until it has MIN_SECONDS, and waiting for that is a reason to come
+								// back, not a reason to abandon the recording.
+								if (!audio) return ++state.liveStarved > LIVE_STARVE_LIMIT ? 'stop' : 'wait';
+								state.liveStarved = 0;
+								if (audio.buffer.byteLength > Math.min(MAX_BYTES, runtime.limits?.maxAudioBytes ?? MAX_BYTES)) return 'stop';
 								const transcribe = resolveTranscribe(latest.current.props);
-								if (!transcribe) return false;
-								const result = await transcribe({ audioBase64: toBase64(audio.buffer) }, state.abort.signal);
-								if (run !== state.run || !state.active) return false;
-								if (result?.ok !== true) return false;
+								if (!transcribe) return 'stop';
+								const result = await transcribe(transcribeRequest(audio), state.abort.signal);
+								if (run !== state.run || !state.active) return 'stop';
+								// A Host hiccup is not the end of live dictation: the words already on
+								// screen stay, and the next snapshot tries again further out.
+								if (result?.ok !== true) return 'failed';
 								const text = result.value?.text ?? '';
-								return text === '' || state.liveDraft.write(text);
-							} catch (error) { return false; }
+								// An empty transcript for a prefix that already produced words is a
+								// recognizer hiccup, never an instruction to erase what is on screen.
+								if (text === '') return 'ok';
+								if (committing) {
+									// Everything up to the pause is frozen for the rest of the take; the
+									// window's start moves there, so the next preview is short again. The
+									// first commit still covers the whole take, so it replaces rather than
+									// appends.
+									state.liveCommitted = whole ? text : state.liveCommitted + text;
+									state.liveAnchor = at;
+									state.liveAnchorAtPause = true;
+									return state.liveDraft.write(state.liveCommitted) ? 'ok' : 'stop';
+								}
+								// A window that still starts at zero carries the whole take, so its result is
+								// the text; one that starts at a commit point carries only the new words.
+								const rendered = whole ? text : state.liveCommitted + text;
+								if (whole) { state.liveCommitted = text; state.liveAnchor = audio.to; }
+								return state.liveDraft.write(rendered) ? 'ok' : 'stop';
+							} catch (error) { return 'failed'; }
 						})();
-						void state.preview.then((again) => {
+						void state.preview.then((outcome) => {
 							// One request at a time; slow inference never builds a stale queue.
-							if (again && run === state.run && state.active) schedulePreview(capture, run);
+							if (outcome === 'stop' || run !== state.run || !state.active) return;
+							const rtt = performance.now() - startedAt;
+							// A take long enough for a preview to cost this much is the one worth
+							// segmenting; shorter ones stay on the accurate whole-take path.
+							if (!state.liveSegmented && rtt > LIVE_SEGMENT_AFTER_MS) state.liveSegmented = true;
+							state.liveInterval = outcome === 'failed'
+								? Math.min(LIVE_MAX_BACKOFF_MS, Math.max(LIVE_MIN_INTERVAL_MS, state.liveInterval * 2))
+								: Math.max(LIVE_MIN_INTERVAL_MS, rtt * LIVE_INTERVAL_SLACK);
+							state.liveWait = outcome === 'wait'
+								? LIVE_STARVE_RETRY_MS
+								: Math.max(0, state.liveInterval - rtt);
+							schedulePreview(capture, run);
 						});
-					}, delay);
+					}, period);
 				}
 
 				async function finish() {
@@ -2077,7 +2275,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						// No providerId/language: the Host resolves both from its own
 						// configuration (this profile selects sensevoice-local, language auto),
 						// so the request can never fail a provider language whitelist.
-						const result = await transcribe({ audioBase64: toBase64(audio.buffer) }, abort.signal);
+						const result = await transcribe(transcribeRequest(audio), abort.signal);
 						if (run !== state.run) return;
 						state.busy = false;
 						if (result === undefined || result.ok !== true) {

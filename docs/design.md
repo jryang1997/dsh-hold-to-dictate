@@ -1,22 +1,25 @@
 # How this plugin hooks into DSH
 
 Notes for anyone extending this plugin — or writing another composer-level plugin.
-Everything below was verified against DSH `0.1.7-rc.2` by reading the shipped packages in
+Everything below was verified against DSH `0.2.0-rc.2` by reading the shipped packages in
 `app.asar` and the live client slot tree. **These are internal interfaces and can change
 between releases**; the plugin is written so that a change degrades rather than breaks.
+Line numbers are the ones that release shipped, not stable addresses: the column moved once
+between `0.1.7-rc.2` and `0.2.0-rc.2`, which is why the checks are written as behaviour rather
+than as positions.
 
 ## The three things a composer plugin needs
 
 | Need | What DSH provides | Where |
 |---|---|---|
 | A place to render inside the input box | `conversation.input.overlay` — a `list` slot, `replaceRisk: none`, rendered inside the composer card | declared by `conversation.composer.bar` |
-| A way to write the draft | `inputActions`, delivered as a **slot standard prop** | `dsh-client-ui-conversation/lib/client.js:13461-13484` |
-| A way to transcribe | `ctx.remote.speech` — a client Cordis service | `dsh-experimental-client-ui-voice-input/lib/client.js:5779` |
+| A way to write the draft | `inputActions`, delivered as a **slot standard prop** | `dsh-client-ui-conversation/lib/client.js:13462-13485` |
+| A way to transcribe | `ctx.remote.speech` — a client Cordis service | `dsh-experimental-client-ui-voice-input/lib/client.js:5818` |
 
 ### Why not `conversation.input.activity`
 
 That is the seat the shipped microphone uses (`VoiceInput`, registered by `registerUi` at
-`.../client-ui-voice-input/lib/client.js:5793`). It is a **single** slot: registering at the
+`.../client-ui-voice-input/lib/client.js:5845`). It is a **single** slot: registering at the
 same priority throws, and taking it would mean displacing the shipped UI. The `overlay`
 slot is a `list`, so a new `id` simply joins `slash-menu` / `command-popup` /
 `feedback-dialog` without touching them.
@@ -46,7 +49,7 @@ div[data-composer-card]                     ← position: relative
 ```
 
 `[data-composer-card]` is set by the composer itself
-(`dsh-client-ui-conversation/lib/client.js:17367`). The editor inside is a Lexical
+(`dsh-client-ui-conversation/lib/client.js:17444`). The editor inside is a Lexical
 `div[data-composer-input][contenteditable][role=textbox]`.
 
 Two rules keep typing intact:
@@ -137,20 +140,40 @@ Host contract (`dsh-experimental-api-speech-to-text/lib/index.js`):
 | `catalog()` / `follow(signal)` | Provider list, selection, readiness, `maxAudioBytes` (4 MiB) and `maxDurationSeconds` (120) |
 | `configure` / `prepare` / `cancelPreparation` | Preferences and model preparation |
 
-This plugin omits `providerId` and `language` so the Host applies its own configuration,
-which sidesteps provider language whitelists entirely.
+This plugin omits `providerId` so the Host applies its own provider configuration. It sends
+`language` only when the `recognition language` setting names one **and** the selected provider
+advertises it — a provider rejects an unknown language outright rather than falling back to its
+default, so the setting is filtered against `catalog()` rather than trusted. Leaving it to the
+Host costs an extra per-request detection pass.
 
 ## Experimental live dictation
 
 The opt-in `live` setting reuses the same official `speech.transcribe` call. A silent
 AudioWorklet captures continuous PCM alongside MediaRecorder; each preview is an independent
-16 kHz mono PCM16 WAV of the growing recording. Partial WebM containers are never decoded for
-previews. MediaRecorder retains the complete audio for final recognition on release.
+16 kHz mono PCM16 WAV. Partial WebM containers are never decoded for previews. MediaRecorder
+retains the complete audio for final recognition on release.
 
-Exactly one preview is in flight. The next snapshot is captured after its response and a
-1–5 second delay that grows with recording length; release stops capture, waits for the
-active preview, and makes one final call. Refreshes never abort the worker. Prefixes repeat
-computation, so long dictations cost more; the existing 110-second limit still applies.
+Exactly one preview is in flight. The wait before the next one is derived from what the previous
+request actually cost — the timer starts when its reply arrives, so the interval between requests
+is the wait plus that round trip. It is floored at 250 ms to avoid re-rendering text that has not
+grown, and doubles after a failure. An empty transcript for a window that already produced words
+is treated as a recognizer hiccup and leaves the draft alone; a failed preview likewise keeps the
+words on screen and backs off instead of ending live dictation for the take.
+
+Because the Host offers only unary calls, a long take would otherwise re-read all of itself on
+every refresh. Past the point where one whole-take preview costs about 0.7 s, the loop instead
+commits everything up to the last sentence-length pause and reads forward from there. The pause
+comes from the recorded audio itself — the worklet's own PCM chunks, so the commit point shares
+the audio's frame clock and cannot drift — and is cut down the middle, so a window never starts
+on a word. A take with no sentence-length pause never commits and keeps the whole-take behaviour.
+Committed words are frozen for the rest of the take; release-to-finalize still reads the complete
+recording, so the retained text is unaffected. Release stops capture, waits for the active
+preview, and makes one final call. Refreshes never abort the worker. The 110-second limit still
+applies.
+
+Measured against the shipped local recognizer: inference is roughly 0.15 s per audio second plus
+150 ms, so 2 s of audio answers in about 0.3 s and 16 s in about 1.2 s. The plugin's own cadence
+is not the bottleneck — sending every 1.5 s makes inference the limit.
 
 Live insertion uses `useInput` and revision-guarded `InputActions.insertText`, replacing only
 the recording's own text range. Original selected text is retained for cancellation. Manual

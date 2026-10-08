@@ -56,9 +56,9 @@ Replace `<profile>` with your profile name. The desktop app manages its `desktop
 - Keyboard: hold `Ctrl + Shift + Space` to record, then release to transcribe.
 - If you edit the draft during recognition, the transcript stays in a small chip. Click it to insert the text.
 
-Under **Settings → Plugins → Hold to talk**, adjust hold duration, keyboard shortcut, hover hint and motion.
+Under **Settings → Plugins → Hold to talk**, adjust hold duration, keyboard shortcut, hover hint, recognition language and motion.
 
-Enable **Live dictation (experimental)** to recognize while recording through the official local speech module. Actual recognition results update the draft and may revise earlier words; release to finalize the whole recording. Off by default. Short recordings request recognition about once a second, with additional model startup and inference latency; longer recordings refresh less often. This is rolling recognition, not a native token stream.
+Enable **Live dictation (experimental)** to recognize while recording through the official local speech module; release to finalize the whole recording. Off by default. A short take re-reads the whole recording each time, so later results can revise earlier words. Once a take is long enough that one such read is slow, it commits at sentence-length pauses and reads only the new audio after each one, which keeps the cadence at a few updates per second instead of slowing down as you speak — at the cost of not revising words already committed. **The release-to-finalize pass still reads the complete recording, so the text you keep is unaffected.** Neither mode is a native token stream.
 
 Live mode requires a local speech provider and a plain-text draft without reference chips. Unsupported environments retain release-to-transcribe. Manual editing stops automatic replacements and keeps the final result available for explicit insertion. Cancellation removes unchanged provisional words while preserving manual additions outside their range. Edits inside that range are kept with an explicit notice.
 
@@ -66,7 +66,7 @@ Live mode requires a local speech provider and a plain-text draft without refere
   <img src="docs/settings-user.png" width="960" alt="Hold to talk settings: mouse and touch hold durations, motion, hover hint and keyboard shortcut">
 </p>
 
-The settings screenshot shows v1.5.2. The current version fixes the description text and updates the plugin name and icon. These older screenshots do not show the new v2.1.0 live-dictation toggle.
+The settings screenshot shows v1.5.2. The current version fixes the description text and updates the plugin name and icon. These older screenshots show neither the v2.1.0 live-dictation toggle nor the v2.2.0 recognition-language row.
 
 <details>
 <summary>Another settings screenshot</summary>
@@ -79,7 +79,7 @@ The settings screenshot shows v1.5.2. The current version fixes the description 
 
 ## Update or uninstall
 
-**After updating to v2.1.0**, reload the page and enable **Live dictation (experimental)** under **Settings → Plugins → Hold to talk** to update the draft while recording. Leave it off to retain release-to-transcribe.
+**After updating to v2.2.0**, just reload the page. **Live dictation (experimental)** still has to be enabled under **Settings → Plugins → Hold to talk**; leave it off to retain release-to-transcribe. The same pane now offers **recognition language**, "Host decides" by default — naming what you speak is faster.
 
 GitHub installs do not update automatically. To update, send this to your Harness Agent:
 
@@ -98,6 +98,6 @@ To uninstall, ask the Agent to remove `@jryang1997/dsh-hold-to-dictate`.
 
 Recognition uses the speech service selected in Harness. The official default uses local SenseVoice; if you configure a cloud provider, audio is sent to that provider.
 
-Community plugin, unaffiliated with DeepSeek. Tested with DeepSeek Harness `0.1.7-rc.2`.
+Community plugin, unaffiliated with DeepSeek. Tested with DeepSeek Harness `0.2.0-rc.2`.
 
 [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Implementation notes](docs/design.md) · [Report an issue](https://github.com/jryang1997/dsh-hold-to-dictate/issues) · [MIT](LICENSE)

@@ -5,10 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.2.0] - 2026-10-08
+
+### Added
+
+- A **recognition language** setting (Host decides / Chinese / English / Cantonese / Japanese /
+  Korean). A fixed language skips the Host's own per-request language detection — measured
+  faster at most clip lengths and never slower — and is filtered against the provider's own
+  advertised list first, because a provider rejects an unknown language outright rather than
+  falling back to its default.
 
 ### Fixed
 
+- Live dictation no longer stops for the rest of a recording when a single preview fails, and
+  no longer stops at all when the first previews arrive before the worklet holds `MIN_SECONDS`
+  of audio. Both paths used to end the loop silently, with the capsule still drawing a waveform.
+- A failed preview now backs off before retrying instead of re-asking as fast as it failed.
 - Holding the composer while a transcription is still in flight no longer strands the press
   ring on screen or the gesture's three window listeners on the window. Both of the release
   paths give up on "no recording is running", so the threshold itself now retracts the ring
@@ -20,6 +32,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one of the three pointer guards, fails `npm test` with a named assertion.
 
 ### Changed
+
+- **Live dictation refreshes on the Host's own round trip instead of a fixed one-second delay.**
+  The old loop waited a flat second *after* each reply arrived, which capped the cadence at about
+  one update per second no matter how fast the recognizer was. The wait is now derived from what
+  the previous request actually cost, so the interval between requests sits just above that round
+  trip: floored at 250 ms, and doubled after a failure.
+- **A long take stops re-reading itself.** Past the point where one whole-take preview costs more
+  than about 0.7 s, live dictation commits everything up to the last sentence-length pause and then
+  reads forward from there, so each refresh covers a segment instead of the whole recording. The
+  pause is found from the recorded audio itself and cut down the middle, so a segment never starts
+  on a word; a take with no sentence-length pause never commits and keeps the whole-take behaviour
+  rather than being cut mid-word. Committed words are frozen for the rest of that take — the
+  release-to-finalize transcription still reads the complete recording, so the text you keep is
+  unaffected.
+- Measured in Chrome against the shipped recognizer, holding for 21 seconds over speech with
+  sentence pauses: **46 previews instead of 14, a median gap of 317 ms instead of 1415 ms**, and
+  the first words on screen at 802 ms instead of 1246 ms. The old cadence also grew with the take
+  while the new one stays under a second. Cutting at every short pause instead of only at
+  sentence-length ones measured 0.85 character agreement with the whole-take result versus 0.99 —
+  which is why the threshold is 0.8 s and not lower.
 
 - The published package ships the three images both READMEs reference, and drops `docs/logo.png`,
   which nothing referenced. The tarball is about 1.0 MB rather than 827 kB: the demo recording
@@ -370,7 +402,8 @@ First release — the hold-to-talk gesture and everything it needs to be safe to
 - Localised `zh` / `en`; light and dark themes; graceful degradation when a host contract is
   missing.
 
-[Unreleased]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.0.2...v2.1.0
 [2.0.2]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.0.0...v2.0.1

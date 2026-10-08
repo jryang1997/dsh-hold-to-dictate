@@ -1,6 +1,6 @@
 {
   "name": "@jryang1997/dsh-hold-to-dictate",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "type": "module",
   "description": "Hold-to-talk dictation for the DeepSeek Harness composer: long-press the input box, release to transcribe into the draft",
   "license": "MIT",
