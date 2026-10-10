@@ -17,18 +17,9 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
-      # No dependencies and no build step: the plugin is plain JavaScript.
-      - name: Parse the host half
-        run: node --check index.js
-      - name: Parse the client half
-        run: node --check client.js
-      - name: Validate the bundle manifest
-        run: node -e "const p=require('./package.json'); if(!p.dsh?.bundle?.patch) throw new Error('dsh.bundle.patch is required'); if(!p.dsh?.client) throw new Error('dsh.client is required'); console.log('manifest ok');"
-      - name: Check the locale dictionaries
-        run: node tests/locales.test.mjs
-      - name: Render every gesture state
-        run: node tests/render.test.mjs
-      - name: Check live dictation and safe cancellation
-        run: node tests/live.test.mjs
-      - name: Check the published tarball
-        run: node tests/package.test.mjs
+      # No dependencies and no build step: the plugin is plain JavaScript. This is the same
+      # command CONTRIBUTING.md tells a contributor to run, so the manifest keys and the four
+      # test scripts cannot drift between a green local run and a red CI run. Each script
+      # prints its own result line, which is where a failure names itself.
+      - name: Run the checks
+        run: npm run check
