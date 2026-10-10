@@ -30,6 +30,13 @@ function dictionary(name) {
 const zh = dictionary('zh');
 const en = dictionary('en');
 
+// The client dictionaries above are only half of what ships. DSH reads the plugin's title and
+// description out of `locale/*.json` for its own plugin list, and both files are exported and
+// published, so they get the same parity check.
+const localeFile = (name) => JSON.parse(readFileSync(join(here, '..', 'locale', `${name}.json`), 'utf8'));
+const zhLocale = localeFile('zh');
+const enLocale = localeFile('en');
+
 const failures = [];
 const check = (condition, message) => {
 	if (!condition) failures.push(message);
@@ -58,10 +65,22 @@ for (const key of Object.keys(zh)) {
 	);
 }
 
+check(
+	JSON.stringify(Object.keys(zhLocale)) === JSON.stringify(Object.keys(enLocale)),
+	`locale/*.json top-level keys differ: zh=[${Object.keys(zhLocale)}] en=[${Object.keys(enLocale)}]`,
+);
+for (const [locale, file] of [['zh', zhLocale], ['en', enLocale]]) {
+	for (const key of ['title', 'description']) {
+		const value = file.meta?.[key];
+		check(typeof value === 'string' && value !== '',
+			`locale/${locale}.json must carry a non-empty meta.${key}`);
+	}
+}
+
 if (failures.length > 0) {
 	console.error(`locales: ${failures.length} problem(s)`);
 	for (const failure of failures) console.error(`  - ${failure}`);
 	process.exit(1);
 }
 
-console.log(`locales: ok (${Object.keys(zh).length} keys x 2 dictionaries, placeholders aligned)`);
+console.log(`locales: ok (${Object.keys(zh).length} keys x 2 dictionaries, placeholders aligned, 2 shipped locale files intact)`);

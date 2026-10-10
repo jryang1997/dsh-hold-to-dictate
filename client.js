@@ -12,8 +12,8 @@
  * left completely alone, so typing, caret placement and text selection are
  * untouched.
  *
- * Nothing outside this component's subtree is written, and the layer stays
- * `pointer-events: none` until a recording is actually running.
+ * Nothing outside this component's subtree is written. The recording surfaces never take a
+ * pointer event; the retained-transcript chip and the failure card are the only two that do.
  */
 window.__ModuleLoader__.load({
 	id: '@jryang1997/dsh-hold-to-dictate',
@@ -35,7 +35,8 @@ window.__ModuleLoader__.load({
 		/** A finger is not a mouse: it rolls, and it never stays within ten pixels. */
 		const TOUCH_TOLERANCE_PX = 16;
 		/** The hint's own box, shared by its stylesheet rule and its measured position. */
-		const HINT_HEIGHT = 20;		/** Upward travel that arms "release to discard". Leaving the card arms it too. */
+		const HINT_HEIGHT = 20;
+		/** Upward travel that arms "release to discard". Leaving the card arms it too. */
 		const CANCEL_ARM_PX = 48;
 		/**
 		 * The disarm threshold, deliberately 10 px *below* the arm threshold. A single
@@ -60,7 +61,7 @@ window.__ModuleLoader__.load({
 		const LIVE_MIN_INTERVAL_MS = 250;
 		/** Ceiling for the retry backoff after a failed preview. */
 		const LIVE_MAX_BACKOFF_MS = 2500;
-		/** Target interval as a multiple of the measured round trip, keeping the worker ~85% busy. */
+		/** Target interval as a multiple of the measured round trip, keeping the worker ~87% busy. */
 		const LIVE_INTERVAL_SLACK = 1.15;
 		/** Once a preview costs this much, stop re-reading the whole take and commit at pauses. */
 		const LIVE_SEGMENT_AFTER_MS = 700;
@@ -99,15 +100,16 @@ window.__ModuleLoader__.load({
 		/** The press ring. Radius 15.5 draws a 36 px circle; the arc is a dash offset. */
 		const RING_RADIUS = 15.5;
 		const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
+		/** Spring frequency of the release return; the meter clock steps it. */
+		const SETTLE_FREQUENCY = 28;
 
 		/** Exact critically damped return; retarget from the current position and velocity. */
 		function settleLift(position, velocity, seconds) {
-			const frequency = 28;
-			const decay = Math.exp(-frequency * seconds);
-			const momentum = velocity + frequency * position;
+			const decay = Math.exp(-SETTLE_FREQUENCY * seconds);
+			const momentum = velocity + SETTLE_FREQUENCY * position;
 			return {
 				position: (position + momentum * seconds) * decay,
-				velocity: (velocity - frequency * momentum * seconds) * decay,
+				velocity: (velocity - SETTLE_FREQUENCY * momentum * seconds) * decay,
 			};
 		}
 
@@ -163,7 +165,7 @@ window.__ModuleLoader__.load({
 			hint: { fallback: true, kind: 'switch' },
 			chord: { fallback: 'Control+Shift+Space', oneOf: Object.keys(CHORDS), kind: 'choice' },
 			live: { fallback: false, kind: 'switch' },
-			language: { fallback: 'host', oneOf: ['host', 'zh', 'en', 'yue', 'ja', 'ko'], kind: 'choice' },
+			language: { fallback: 'host', oneOf: Object.keys(LANGUAGE_LABELS), kind: 'choice' },
 		};
 
 		const configDefaults = () => Object.fromEntries(
@@ -290,6 +292,12 @@ window.__ModuleLoader__.load({
 
 		/** Handles captured in `apply`, so a slot entry that receives no injected props still works. */
 		const runtime = { speech: null, limits: null };
+		/** The provider entry the Host selected, or undefined before its limits arrive. */
+		const selectedProvider = () => runtime.limits?.providers?.find((entry) => entry.id === runtime.limits.selection?.providerId);
+		/** Recording cap: the smaller of the Host's limit and this plugin's ceiling. */
+		const maxSeconds = () => Math.min(MAX_SECONDS, runtime.limits?.maxDurationSeconds ?? MAX_SECONDS);
+		/** Audio cap: the smaller of the Host's limit and this plugin's ceiling. */
+		const maxBytes = () => Math.min(MAX_BYTES, runtime.limits?.maxAudioBytes ?? MAX_BYTES);
 
 		const zh = {
 			hint: '按住鼠标语音输入文字 · 上滑取消',
@@ -313,7 +321,6 @@ window.__ModuleLoader__.load({
 			unavailable: '当前环境无法录音',
 			permission: '麦克风不可用，请在系统设置中允许后重试',
 			tooLarge: '录音超出语音服务上限，请说短一点',
-			settingsTitle: '语音输入',
 			settingsIntro: '这些设置只影响本机，不会离开这台电脑。',
 			holdMsLabel: '按住时长',
 			holdMsHint: '按住多久才开始录音。手慢就调长一点，误触多就调短一点。',
@@ -365,7 +372,6 @@ window.__ModuleLoader__.load({
 			unavailable: 'This environment cannot record audio',
 			permission: 'Microphone unavailable; allow access in system settings and retry',
 			tooLarge: 'That recording is longer than the speech service accepts',
-			settingsTitle: 'Dictation',
 			settingsIntro: 'These settings apply to this machine only; nothing leaves it.',
 			holdMsLabel: 'Hold duration',
 			holdMsHint: 'How long the press must stay still. Longer if your hand is slow, shorter if it fires by accident.',
@@ -976,10 +982,6 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
   transition:opacity var(--dsh-htt-t-base) var(--dsh-htt-out),
              translate var(--dsh-htt-t-base) var(--dsh-htt-out);
 }
-.dsh-htt-notice[data-tone=error]{
-  color:var(--dsw-alias-state-error-primary);
-  --dsw-elevation-stroke-color:var(--dsw-alias-state-error-primary);
-}
 @starting-style{.dsh-htt-notice{opacity:0; translate:0 5px}}
 .dsh-htt-notice[data-leaving]{
   opacity:0; translate:0 3px;
@@ -1070,17 +1072,14 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 .dsh-htt-layer[data-motion=calm] .dsh-htt-ring,
 .dsh-htt-layer[data-motion=calm] .dsh-htt-ring-arc{transition-duration:1ms!important}
 
-@media (prefers-reduced-transparency:reduce){
+/* A media query list, because the two preferences ask for the same opaque surface. */
+@media (prefers-reduced-transparency:reduce), (prefers-contrast:more){
   .dsh-htt-material{
     background:var(--dsw-specific-input-major,var(--dsw-alias-bg-layer-2));
     backdrop-filter:none; -webkit-backdrop-filter:none;
   }
 }
 @media (prefers-contrast:more){
-  .dsh-htt-material{
-    background:var(--dsw-specific-input-major,var(--dsw-alias-bg-layer-2));
-    backdrop-filter:none; -webkit-backdrop-filter:none;
-  }
   .dsh-htt-pill{--dsw-elevation-stroke-color:var(--dsw-alias-border-l3)}
   .dsh-htt-material::after{display:none}
 }
@@ -1458,7 +1457,8 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 		//#region component
 
 		/** Replace only this recording's plain-text range, guarded by the Host revision. */
-		function createLiveDraft(actions, input, span, getInput) {
+		function createLiveDraft(actions, span, getInput) {
+			const input = getInput();
 			if (!input || typeof input.draft !== 'string' || input.draftRev !== span.draftRev
 				|| !Array.isArray(input.occurrences) || input.occurrences.length > 0
 				|| span.start < 0 || span.end > input.draft.length) return null;
@@ -1502,7 +1502,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 		function transcribeLanguage() {
 			const chosen = config.get('language');
 			if (chosen === 'host') return undefined;
-			const provider = runtime.limits?.providers?.find((entry) => entry.id === runtime.limits.selection?.providerId);
+			const provider = selectedProvider();
 			return provider?.languages?.includes(chosen) ? chosen : undefined;
 		}
 
@@ -1706,7 +1706,8 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				 */
 				const show = (patchValues) => {
 					if (patchValues.phase !== undefined) {
-						if (patchValues.phase !== 'notice') clearNotice();
+						// A phase change replaces the previous notice's timers.
+						clearNotice();
 						clearBubbleExit();
 						const leaving = BUBBLE_PHASES.has(latest.current.view.phase)
 							&& !BUBBLE_PHASES.has(patchValues.phase);
@@ -1730,7 +1731,6 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						return;
 					}
 					if (patchValues.phase !== 'notice') return;
-					clearNotice();
 					state.noticeHold = window.setTimeout(() => {
 						state.noticeHold = 0;
 						patch({ leaving: true });
@@ -1815,19 +1815,8 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					void transmit(pending.audio, pending.span, state.run, pending.liveDraft);
 				};
 
-				const clearTimer = () => {
-					if (state.timer !== 0) {
-						window.clearTimeout(state.timer);
-						state.timer = 0;
-					}
-				};
-
-				const clearLimit = () => {
-					if (state.limit !== 0) {
-						window.clearTimeout(state.limit);
-						state.limit = 0;
-					}
-				};
+				const clearTimer = () => clearTimeoutOf('timer');
+				const clearLimit = () => clearTimeoutOf('limit');
 
 				/**
 				 * The gesture's end. Trailing `touch` here rather than in `resetGesture` is
@@ -1840,7 +1829,6 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					window.removeEventListener('pointercancel', onCancel, true);
 					state.pointerId = null;
 					state.touch = false;
-					state.tolerance = ARM_TOLERANCE_PX;
 				};
 
 				/**
@@ -2058,9 +2046,9 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					state.liveCommitted = '';
 					state.liveAnchor = 0;
 					state.liveAnchorAtPause = false;
-					const provider = runtime.limits?.providers?.find((provider) => provider.id === runtime.limits.selection?.providerId);
+					const provider = selectedProvider();
 					state.liveDraft = config.get('live') && provider?.location === 'host-local'
-						? createLiveDraft(actions, latest.current.input, state.span, () => latest.current.input) : null;
+						? createLiveDraft(actions, state.span, () => latest.current.input) : null;
 					state.abort = new AbortController();
 					resetGesture();
 					const capture = createCapture(state.liveDraft !== null);
@@ -2080,7 +2068,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 
 					// The Host caps recording length; stop on our own so a forgotten press cannot
 					// grow the chunk buffer without bound and then be rejected on arrival.
-					const limitSeconds = Math.min(MAX_SECONDS, runtime.limits?.maxDurationSeconds ?? MAX_SECONDS);
+					const limitSeconds = maxSeconds();
 					state.limit = window.setTimeout(() => {
 						state.limit = 0;
 						if (state.active) void finish();
@@ -2147,7 +2135,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 								// back, not a reason to abandon the recording.
 								if (!audio) return ++state.liveStarved > LIVE_STARVE_LIMIT ? 'stop' : 'wait';
 								state.liveStarved = 0;
-								if (audio.buffer.byteLength > Math.min(MAX_BYTES, runtime.limits?.maxAudioBytes ?? MAX_BYTES)) return 'stop';
+								if (audio.buffer.byteLength > maxBytes()) return 'stop';
 								const transcribe = resolveTranscribe(latest.current.props);
 								if (!transcribe) return 'stop';
 								const result = await transcribe(transcribeRequest(audio), state.abort.signal);
@@ -2234,7 +2222,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 							show({ phase: 'notice', notice: say('tooShort'), tone: 'muted', cancelled: false });
 							return;
 						}
-						const limitBytes = Math.min(MAX_BYTES, runtime.limits?.maxAudioBytes ?? MAX_BYTES);
+						const limitBytes = maxBytes();
 						if (audio.buffer.byteLength > limitBytes) {
 							state.busy = false;
 							fail(say('tooLarge'), null);
@@ -2272,9 +2260,9 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					const abort = new AbortController();
 					state.abort = abort;
 					try {
-						// No providerId/language: the Host resolves both from its own
-						// configuration (this profile selects sensevoice-local, language auto),
-						// so the request can never fail a provider language whitelist.
+						// providerId is left out so the Host applies its own selection;
+						// `transcribeRequest` attaches the chosen language only when the
+						// selected provider advertises it.
 						const result = await transcribe(transcribeRequest(audio), abort.signal);
 						if (run !== state.run) return;
 						state.busy = false;
@@ -2582,7 +2570,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 			// The hint is shown only when the tool row genuinely has room for it.
 			const showHint = hovered && view.phase === 'idle' && pending === ''
 				&& config.get('hint') && box.hintMax >= HINT_MIN_PX;
-			const showPending = !busy && (pending !== '' || view.pendingLeaving);
+			const showPending = !busy && pending !== '';
 			const showBubble = busy || completed || view.bubbleLeaving;
 
 			/**
@@ -2748,7 +2736,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 									},
 								]),
 								h('span', { className: 'dsh-htt-time', 'aria-hidden': true },
-									`${String(Math.floor((view.elapsed ?? 0) / 60)).padStart(2, '0')}:${String((view.elapsed ?? 0) % 60).padStart(2, '0')}`),
+									`${String(Math.floor(view.elapsed / 60)).padStart(2, '0')}:${String(view.elapsed % 60).padStart(2, '0')}`),
 							),
 						),
 					),

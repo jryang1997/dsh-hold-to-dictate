@@ -51,7 +51,7 @@ Check whether the recognition models are ready. If I need to download models or
 grant microphone access, tell me where. When done, explain how to reload and test.
 ```
 
-Reload the page afterwards. Hold the mouse button in the message box for about 0.3 seconds, say a sentence, then release. Once the text appears in your draft, you are ready.
+Reload the page afterwards.
 
 <details>
 <summary>Install from the command line</summary>
@@ -68,7 +68,7 @@ Replace `<profile>` with your profile name. The desktop app manages its `desktop
 
 ## Use it
 
-Hold the mouse button in the message box and speak. Release to transcribe.
+Holding the mouse button for about 0.3 seconds starts recording.
 
 | Action | How |
 |---|---|
@@ -77,7 +77,7 @@ Hold the mouse button in the message box and speak. Release to transcribe.
 | Cancel | Drag upward out of the box and release when the cancel cue appears, or press `Esc` |
 | Insert a held-back result | If you edited the draft during recognition, the transcript waits in a small chip at the lower right. Click it to insert at the caret |
 
-Moving the pointer into the composer shows a hint line in the middle of the tool row reading "Hold to dictate · swipe up to cancel". When the free space in that row drops under 48 px, which happens with a long model label, the hint is dropped rather than drawn over the controls beside it. Every colour, radius, shadow and curve comes from the host's own tokens, so light, dark, reduced transparency and increased contrast all keep working.
+Moving the pointer into the composer shows a hint line in the middle of the tool row reading "Hold to dictate · swipe up to cancel". When the free space in that row drops under 48 px, as with a long model label, the hint is dropped rather than drawn over the controls beside it. Light, dark, reduced transparency and increased contrast all keep working.
 
 ## Settings
 
@@ -119,11 +119,11 @@ It behaves in two phases:
 - **Short takes** re-read the whole recording each time, so later results can revise earlier words.
 - **Long takes** switch once a whole-take read costs more than about 0.7 s. From there it commits everything up to the last sentence-length pause and reads only the new audio after it. The pause is found in the recording itself and cut down the middle, so a window never starts on a word. A take with no sentence-length pause never commits and keeps the whole-take behaviour. Committed words are frozen for the rest of that take.
 
-Neither phase affects what you keep. **The release-to-finalize pass still reads the complete recording.**
+Releasing still finalizes from the complete recording, so neither phase changes the text you keep.
 
-Measured on one 21-second clip with sentence pauses, changing only the code version: previews went from 14 to 46, and the first words appeared at 802 ms instead of 1246 ms. The old slowness came from the plugin's own fixed one-second wait, not from the model.
+On one 21-second clip with sentence pauses, changing only the code version, previews went from 14 to 46 and the first words appeared at 802 ms instead of 1246 ms. The old slowness came from the plugin's own fixed one-second wait, not from the model.
 
-Live mode requires a local speech provider and a plain-text draft without reference chips; other environments keep release-to-transcribe. Editing the draft during recognition stops automatic replacement and keeps the final result in the chip for explicit insertion. Neither mode is a native token stream.
+Live mode requires a local speech provider and a plain-text draft without reference chips. Other environments keep release-to-transcribe. Editing the draft during recognition stops automatic replacement and keeps the final result in the chip for explicit insertion. Neither mode is a native token stream.
 
 ## When something goes wrong
 
@@ -138,14 +138,14 @@ If you edited the draft during recognition, the result steps aside into the chip
 
 ## Known limits
 
-- After a long take commits a segment, those provisional words stop correcting themselves. Releasing still finalizes from the complete recording.
+- After a long take commits a segment, those provisional words stop correcting themselves.
 - The agreement figures come from one studio clip, one model, one machine and a limited number of runs. They are not a guarantee across material.
-- Automated testing uses a fake microphone fed a WAV plus a simplified DOM stub. **A real microphone on the real page has since been tested and works well.** Pause detection is still harder on spontaneous speech; in noise it finds no pause and falls back to whole-take recognition, which is the safe direction.
+- Automated testing uses a fake microphone fed a WAV plus a simplified DOM stub. **A real microphone on the real page has since been tested and works.** Pause detection is still harder on spontaneous speech. In noise it finds no pause and keeps whole-take recognition, so no words are cut mid-sentence.
 - Recordings are capped at about 110 seconds and 4 MiB, whichever the speech service advertises is smaller.
 
 ## Update or uninstall
 
-GitHub installs do not update automatically: pnpm pins a GitHub dependency to one commit, so a new release in the repository is not picked up. Updating means removing first, then installing:
+GitHub installs do not update automatically. pnpm pins a GitHub dependency to one commit, so a new release in the repository is not picked up. Updating means removing first, then installing:
 
 ```text
 Update Hold to talk using plugin_manager. First remove the old installation with

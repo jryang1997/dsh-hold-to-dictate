@@ -13,6 +13,13 @@ import { readFileSync } from 'node:fs';
 const read = (name) => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8');
 const manifest = JSON.parse(read('package.json'));
 
+// Without these two keys the bundle installs and then does nothing: `dsh.bundle.patch` is
+// what makes DSH load it at all, and `dsh.client` is what marks the client half as a browser
+// module. Both failures are silent on a real install, so they are checked here instead of
+// only in CI.
+assert.ok(manifest.dsh?.bundle?.patch, 'package.json must declare dsh.bundle.patch');
+assert.ok(manifest.dsh?.client, 'package.json must declare dsh.client');
+
 // The READMEs ship as part of the package, so a relative reference in one has to resolve
 // inside the tarball. Absolute URLs are somebody else's problem and are skipped.
 const referenced = [...new Set([...`${read('README.md')}\n${read('README.en.md')}`.matchAll(/src="([^"]+)"/g)]

@@ -9,6 +9,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Audit pass on the client, READMEs, CI and tests.** Shared helpers cover the selected
+  provider and recording caps; duplicate media-query surfaces and unused `settingsTitle` /
+  notice-error CSS are gone; CI runs `npm run check` like CONTRIBUTING.md. Both READMEs drop
+  duplicated install/use cheer and implementation-token prose, and say once that release still
+  finalizes from the full recording. Locale and package tests now assert the shipped
+  `locale/*.json` files and the silent-fail `dsh.bundle` / `dsh.client` keys.
+
 - **Both READMEs are rewritten for a first-time reader.** The install path now starts with the
   two things that have to be in place before the plugin can do anything (the official voice-input
   module and a prepared local model), because a missing module makes the plugin register nothing

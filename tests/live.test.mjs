@@ -56,9 +56,7 @@ function mount({ selected = false, live = true, location = 'host-local', worklet
 		createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
 		createAnalyser() { return { fftSize: 256, getFloatTimeDomainData: a => a.fill(.1) }; }
 		decodeAudioData = async () => ({ duration: 4 });
-		createGain() { return { gain: { value: 0 }, connect() {}, disconnect() {} }; }
 		close = async () => {};
-		resume = async () => {};
 	}
 	class Offline {
 		constructor(_channels, frames) { this.frames = frames; }

@@ -290,6 +290,7 @@ const settingRow = (tree, key) => findAll(tree, 'dsh-htt-set-row').find((row) =>
 const IDLE = {
 	phase: 'idle', notice: '', tone: 'info', leaving: false, cancelled: false, pending: '',
 	pendingLeaving: false, bubbleLeaving: false, arm: null, armLeaving: false, retryable: false,
+	elapsed: 0,
 };
 const BOX = { height: 84, rowHeight: 42, hintRight: 220, hintMax: 180 };
 
@@ -481,7 +482,7 @@ check(attrs(tree, 'data-leaving').length === 1, 'the leaving notice carries data
 // Retained transcript, and its exit.
 tree = render(false, { ...IDLE, pending: '你好' });
 check(classes(tree).includes('dsh-htt-pending'), 'the retained-transcript chip renders');
-tree = render(false, { ...IDLE, pendingLeaving: true });
+tree = render(false, { ...IDLE, pending: '你好', pendingLeaving: true });
 check(classes(tree).includes('dsh-htt-pending'), 'the chip stays mounted during its exit');
 check(attrs(tree, 'data-leaving').length === 1, 'the leaving chip carries data-leaving');
 
