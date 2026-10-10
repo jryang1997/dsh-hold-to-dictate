@@ -140,7 +140,7 @@ If you edited the draft during recognition, the result steps aside into the chip
 
 - After a long take commits a segment, those provisional words stop correcting themselves. Releasing still finalizes from the complete recording.
 - The agreement figures come from one studio clip, one model, one machine and a limited number of runs. They are not a guarantee across material.
-- Browser testing used a fake microphone fed a WAV plus a simplified DOM stub. **A real microphone on a real page was not tested.** Pause detection is harder on spontaneous speech; in noise it finds no pause and falls back to whole-take recognition, which is the safe direction.
+- Automated testing uses a fake microphone fed a WAV plus a simplified DOM stub. **A real microphone on the real page has since been tested and works well.** Pause detection is still harder on spontaneous speech; in noise it finds no pause and falls back to whole-take recognition, which is the safe direction.
 - Recordings are capped at about 110 seconds and 4 MiB, whichever the speech service advertises is smaller.
 
 ## Update or uninstall

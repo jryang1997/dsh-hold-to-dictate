@@ -19,6 +19,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   READMEs now show above the fold: English uses the existing `docs/gesture-overview.svg`, and
   Chinese gets a translated copy.
 
+### Changed
+
+- **The "a real microphone on a real page was never tested" limit is gone, because it stopped
+  being true.** Both READMEs now separate the two things that sentence was merging: the automated
+  harness still uses a fake microphone fed a WAV plus a DOM stub, and a real microphone on the real
+  page has since been used and works well. The rest of the limit — pause detection is harder on
+  spontaneous speech, and noise falls back to whole-take recognition — is unchanged.
+
 ### Added
 
 - `docs/gesture-overview.zh.svg`, a Chinese counterpart to the existing gesture diagram.
