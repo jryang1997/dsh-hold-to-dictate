@@ -7,6 +7,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **AI polish** (off by default). After transcription, the text is cleaned by a model the user
+  already configured in DSH: fillers removed, self-corrections resolved, misheard words fixed,
+  punctuation added, explicit spoken enumerations turned into numbered lists. Runs as a Host
+  Remote (`polish.js`) on `@deepseek-ai/dsh-llm`, picks a light model and turns reasoning off.
+  Never auto-sends; any failure, timeout (15 s) or empty reply inserts the original words with a
+  notice. Esc cancels it like transcription.
+
 ### Changed
 
 - **One recording is one take.** The live plan and draft, the capture, the in-flight preview,

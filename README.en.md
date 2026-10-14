@@ -134,6 +134,21 @@ On one 21-second clip with sentence pauses, changing only the code version, prev
 
 Live mode requires a local speech provider and a plain-text draft without reference chips. Other environments keep release-to-transcribe. Editing the draft during recognition stops automatic replacement and keeps the final result in the chip for explicit insertion. Neither mode is a native token stream.
 
+## AI polish
+
+Off by default. When on, a finished transcript is cleaned by a model **you already set up in DSH** before it is inserted — no extra API key:
+
+- Drops fillers and stutters (“um”, “uh”, 嗯, 那个, 就是), keeping particles that carry tone
+- Keeps only the final wording when you correct yourself (“no wait, I mean…”)
+- Fixes misheard words and terms (根木鹿 → 根目录, 脱肯 → Token), adds punctuation and CJK–Latin spacing
+- Turns an explicit spoken enumeration (“three things: first… second…”) into a `1. 2. 3.` list; plain narration is left alone
+
+It does not rewrite, translate or answer what you said, and it **never sends** the message. It picks a light model automatically (names with Flash / Mini / Lite first) and turns reasoning off. The text goes to that model's provider, so leave it off if that matters to you.
+
+Any failure — no model, more than 15 s, an empty reply — inserts the original words and says so. Esc cancels polishing like it cancels transcription. The polish step runs on the Host through the official `@deepseek-ai/dsh-llm`; without it the plugin still works and always inserts the original.
+
+The prompt draws on the polish rules of [dsh-better-input](https://github.com/DIAG5/dsh-better-input) (MIT).
+
 ## When something goes wrong
 
 | Symptom | Cause and fix |

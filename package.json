@@ -1,6 +1,6 @@
 {
   "name": "@jryang1997/dsh-hold-to-dictate",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "type": "module",
   "description": "Hold-to-talk dictation for the DeepSeek Harness composer: long-press the input box, release to transcribe into the draft",
   "license": "MIT",
@@ -36,6 +36,7 @@
   "files": [
     "index.js",
     "client.js",
+    "polish.js",
     "cordis.patch.yml",
     "icon.svg",
     "locale/*.json",
@@ -52,8 +53,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node tests/locales.test.mjs && node tests/render.test.mjs && node tests/plan.test.mjs && node tests/live.test.mjs && node tests/package.test.mjs",
-    "check": "node --check index.js && node --check client.js && npm test"
+    "test": "node tests/locales.test.mjs && node tests/render.test.mjs && node tests/plan.test.mjs && node tests/live.test.mjs && node tests/polish.test.mjs && node tests/package.test.mjs",
+    "check": "node --check index.js && node --check polish.js && node --check client.js && npm test"
   },
   "dsh": {
     "bundle": {
