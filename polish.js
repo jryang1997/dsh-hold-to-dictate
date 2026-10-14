@@ -59,6 +59,35 @@ Output: 我们下周三和老王对一下进度。
 Input: um can you check the proposal before tomorrow's meeting no wait the code repo and then we can sync up
 Output: Can you check the code repo before tomorrow's meeting, and then we can sync up?`;
 
+/** At most this many vocabulary terms reach the model; each at most VOCAB_TERM_CHARS. */
+export const MAX_VOCAB_TERMS = 60;
+export const VOCAB_TERM_CHARS = 40;
+
+/** Split the user's vocabulary on commas, enumeration commas, semicolons or newlines. */
+export function parseVocabulary(text) {
+	const seen = new Set();
+	const terms = [];
+	for (const piece of String(text ?? '').split(/[,，、;；\n]+/)) {
+		const term = piece.trim().replace(/\s+/g, ' ');
+		if (term === '' || term.length > VOCAB_TERM_CHARS || seen.has(term.toLowerCase())) continue;
+		seen.add(term.toLowerCase());
+		terms.push(term);
+		if (terms.length === MAX_VOCAB_TERMS) break;
+	}
+	return terms;
+}
+
+/** The system prompt, with the user's own spellings appended when they gave any. */
+export function systemPrompt(terms) {
+	if (terms.length === 0) return POLISH_PROMPT;
+	return `${POLISH_PROMPT}
+
+# The user's vocabulary
+These are names and terms this user often says, spelled the way they want them:
+${terms.map((term) => `- ${term}`).join('\n')}
+When a heard word or phrase sounds like one of these and the sentence makes sense with it, write the vocabulary spelling exactly (including case and spacing). Do not insert a term that was not said.`;
+}
+
 export const polishUserText = (transcript) => `<transcript>\n${transcript}\n</transcript>`;
 
 /** Models a quick cleanup should prefer: cheap, fast, no long reasoning. */
@@ -166,18 +195,22 @@ export function structureList(text) {
 	return text;
 }
 
+/**
+ * Tokens to compare: one per CJK character, one per Latin or digit word. Counting a word
+ * as one token keeps a vocabulary fix (克劳德叩 → Claude Code) from looking like an invention.
+ */
 const comparable = (text) => text
 	.replace(/^\s*\d+\.\s/gm, '')
 	.toLowerCase()
-	.replace(/[^\p{L}\p{N}]/gu, '');
+	.match(/[a-z0-9]+|[\p{L}\p{N}]/gu) ?? [];
 
 /**
  * How far the model strayed from what was said: characters it invented, and the share of
  * the original it kept. Deleting fillers is expected; inventing words is not.
  */
 export function divergence(raw, output) {
-	const a = Array.from(comparable(raw));
-	const b = Array.from(comparable(output));
+	const a = comparable(raw);
+	const b = comparable(output);
 	if (a.length === 0 || b.length === 0) return { inserted: b.length, kept: b.length === 0 ? 0 : 1 };
 	let prev = new Uint16Array(b.length + 1);
 	let row = new Uint16Array(b.length + 1);
@@ -198,8 +231,8 @@ const FILLERS = /嗯|呃|额|啊|哎|那个|就是说|就是|然后|\b(?:um+|uh+
 export function strayed(raw, output) {
 	const spoken = raw.replace(FILLERS, '');
 	const { inserted, kept } = divergence(spoken, output);
-	const size = Array.from(comparable(spoken)).length;
-	return inserted > Math.max(8, Math.ceil(size * 0.3)) || kept < 0.5;
+	const size = comparable(spoken).length;
+	return inserted > Math.max(4, Math.ceil(size * 0.3)) || kept < 0.4;
 }
 
 /**
@@ -254,7 +287,7 @@ async function callConfig(llm, route, signal) {
  * Run one cleanup. Returns the polished text, or throws; the caller keeps the original.
  * @param deps - `{ llm, createUserMessage }` from the Host.
  */
-export async function polishText(deps, route, transcript, signal) {
+export async function polishText(deps, route, transcript, signal, terms = []) {
 	const raw = String(transcript ?? '').trim();
 	if (raw === '') return '';
 	if (raw.length > MAX_TRANSCRIPT_CHARS) throw new Error('polish/too-long');
@@ -276,7 +309,7 @@ export async function polishText(deps, route, transcript, signal) {
 		const output = tidyOutput(await collectText(prepared.stream({
 			...prepared.config,
 			messages: [message],
-			system: POLISH_PROMPT,
+			system: systemPrompt(terms),
 			temperature: 0,
 			signal: timeout.signal,
 		}), raw.length * MAX_OUTPUT_FACTOR + 200));
@@ -332,13 +365,16 @@ export function createPolishService(protocol, llmModule) {
 			return route === null ? null : { provider: route.providerName, model: route.modelName };
 		}
 
-		/** Clean one finished transcript; returns `{ text, model }`. */
-		async polish(transcript, signal) {
+		/**
+		 * Clean one finished transcript; returns `{ text, model }`. `vocabulary` is the
+		 * user's comma- or line-separated list of preferred spellings (may be empty).
+		 */
+		async polish(transcript, vocabulary, signal) {
 			const route = await this.route();
 			if (route === null) throw new Error('polish/no-model');
 			const text = await polishText(
 				{ llm: this.ctx.llm, createUserMessage: llmModule.createUserMessage },
-				route, transcript, signal,
+				route, transcript, signal, parseVocabulary(vocabulary),
 			);
 			return { text, model: route.modelName };
 		}

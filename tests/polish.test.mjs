@@ -108,7 +108,7 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 	assert.deepEqual(await service.describe(), { provider: 'DeepSeek', model: 'DeepSeek-V4.1-Flash' });
 	assert.deepEqual(await service.polish('um hello'), { text: 'Hello.', model: 'DeepSeek-V4.1-Flash' });
 	// The gateway reads plain parameter names from the method source; keep them simple.
-	assert.match(Function.prototype.toString.call(Service.prototype.polish), /^async polish\(transcript, signal\)/);
+	assert.match(Function.prototype.toString.call(Service.prototype.polish), /^async polish\(transcript, vocabulary, signal\)/);
 	const empty = new Service({ llm: { ...llm, listProviders: () => [] } });
 	assert.equal(await empty.describe(), null);
 	await assert.rejects(empty.polish('hi'), /no-model/);
@@ -145,6 +145,26 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 	const lister = fakeLlm(() => stream([{ type: 'text-delta', text: '两件事：第一，预算；第二，文档。' }]), { seen });
 	assert.equal(await polishText({ llm: lister, createUserMessage }, route('deepseek-flash'), '两件事第一预算第二文档'), '两件事：\n1. 预算\n2. 文档');
 	assert.equal(seen.options.temperature, 0);
+}
+
+// Vocabulary: parsed, deduped, capped, and only added to the prompt when given.
+{
+	const { parseVocabulary, systemPrompt, MAX_VOCAB_TERMS } = await import('../polish.js');
+	assert.deepEqual(parseVocabulary('Claude Code， DSH、根目录\nToken; dsh ;; '), ['Claude Code', 'DSH', '根目录', 'Token']);
+	assert.deepEqual(parseVocabulary(undefined), []);
+	assert.deepEqual(parseVocabulary('x'.repeat(41)), [], 'over-long terms are dropped, not cut');
+	assert.equal(parseVocabulary(Array.from({ length: 99 }, (_, i) => `t${i}`).join(',')).length, MAX_VOCAB_TERMS);
+	assert.equal(systemPrompt([]), POLISH_PROMPT);
+	assert.match(systemPrompt(['Claude Code']), /- Claude Code\n/);
+	// The service forwards the user's terms into the system prompt.
+	const seen = {};
+	const Service = createPolishService({
+		TypertRemoteService: class { constructor(ctx) { this.ctx = ctx; } },
+		Remote: () => {},
+	}, { createUserMessage });
+	const service = new Service({ llm: fakeLlm(() => stream([{ type: 'text-delta', text: '用 Claude Code 打开。' }]), { seen }) });
+	assert.deepEqual(await service.polish('用克劳德叩打开', 'Claude Code', undefined), { text: '用 Claude Code 打开。', model: 'DeepSeek-V4.1-Flash' });
+	assert.match(seen.options.system, /# The user's vocabulary\n[\s\S]*- Claude Code/);
 }
 
 console.log('polish: ok');

@@ -99,6 +99,7 @@ dsh plugin --profile <profile> add github:jryang1997/dsh-hold-to-dictate
 | 键盘快捷键 | `Ctrl + Shift + Space` | 关闭 / `Ctrl + Shift + Space` / `Ctrl + Shift + D` / `Ctrl + Shift + M` / `Ctrl + Alt + Space` |
 | 悬停提示 | 开 | 开 / 关 |
 | AI 润色（实验） | 关 | 开 / 关。见下文 |
+| 常用词 | 空 | 开启润色后出现。逗号或换行分隔，最多 60 个 |
 | 动效 | 完整 | 完整 / 精简（去掉位移与缩放，只保留淡入淡出） |
 | 边说边出字（实验） | 关 | 开 / 关，见下节 |
 
@@ -142,6 +143,8 @@ dsh plugin --profile <profile> add github:jryang1997/dsh-hold-to-dictate
 - 口误自我纠正（「不对，我说的是…」）只留最后的说法
 - 修正同音错字和听错的术语（根木鹿 → 根目录，脱肯 → Token），补标点和中英文间空格
 - 口述「三件事，第一…第二…」时整理成 `1. 2. 3.` 列表；普通叙述不硬拆
+
+听错的专业词最好的办法是填「常用词」：把你常说的术语、项目名、人名填进去（如 `Claude Code, DSH, Kubernetes`），润色听到发音相近的词会按你的写法纠正，但不会凭空插入。列表由代码按「第一 / 首先 / 一是 / first」这类序数词排版；模型改动太大时会被拒绝并插入原文。
 
 它不改写、不翻译、不回答你说的问题，也**不会自动发送**。模型自动挑一个轻量的（名字里带 Flash / Mini / Lite 之类的优先），并关掉推理。消息会经过该模型的服务商，在意隐私就保持关闭。
 

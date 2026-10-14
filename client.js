@@ -267,7 +267,10 @@ window.__ModuleLoader__.load({
 		const POLISH_REMOTE = {
 			package: '@jryang1997/dsh-hold-to-dictate',
 			descriptors: [
-				polishEndpoint('polish', [{ name: 'transcript', wire: 'transcript', source: 'json', codec: STRING_CODEC }], true),
+				polishEndpoint('polish', [
+					{ name: 'transcript', wire: 'transcript', source: 'json', codec: STRING_CODEC },
+					{ name: 'vocabulary', wire: 'vocabulary', source: 'json', codec: STRING_CODEC },
+				], true),
 				polishEndpoint('describe', [], false),
 			],
 		};
@@ -299,6 +302,7 @@ window.__ModuleLoader__.load({
 			chord: { fallback: 'Control+Shift+Space', oneOf: Object.keys(CHORDS), kind: 'choice' },
 			live: { fallback: false, kind: 'switch' },
 			polish: { fallback: false, kind: 'switch' },
+			vocabulary: { fallback: '', kind: 'text', max: 600 },
 			language: { fallback: 'host', oneOf: Object.keys(LANGUAGE_LABELS), kind: 'choice' },
 		};
 
@@ -310,6 +314,7 @@ window.__ModuleLoader__.load({
 		const coerceConfig = (field, value) => {
 			if (field.oneOf !== undefined) return field.oneOf.includes(value) ? value : field.fallback;
 			if (field.kind === 'switch') return typeof value === 'boolean' ? value : field.fallback;
+			if (field.kind === 'text') return typeof value === 'string' ? value.slice(0, field.max) : field.fallback;
 			const number = typeof value === 'number' ? value : Number.parseFloat(value);
 			if (!Number.isFinite(number)) return field.fallback;
 			return Math.round(Math.min(field.max, Math.max(field.min, number)));
@@ -431,10 +436,10 @@ window.__ModuleLoader__.load({
 		 * no model, a timeout, a cancelled take or an odd reply all land here, because a
 		 * cleanup is never worth losing what the user said.
 		 */
-		const polishTranscript = async (transcript, signal) => {
+		const polishTranscript = async (transcript, vocabulary, signal) => {
 			if (runtime.polish === null) return null;
 			try {
-				const result = await runtime.polish.polish(transcript, signal);
+				const result = await runtime.polish.polish(transcript, vocabulary, signal);
 				const text = result?.ok === true ? String(result.value?.text ?? '').trim() : '';
 				return text === '' ? null : text;
 			} catch (error) {
@@ -491,6 +496,9 @@ window.__ModuleLoader__.load({
 			polishLabel: 'AI 润色（实验）',
 			polishHint: '转写后用你在 DSH 里配好的模型整理一遍：去掉「嗯、那个」这类语气词，修正同音错字，补标点，口述的「第一、第二」整理成列表。会多等一两秒；失败时插入原文。',
 			polishing: '润色中',
+			vocabularyLabel: '常用词',
+			vocabularyHint: '你常说的术语、项目名、人名，用逗号或换行分隔。润色听到发音相近的词时，会按这里的写法纠正。',
+			vocabularyPlaceholder: '例如：Claude Code, DSH, 根目录, Token',
 			polishFailed: '润色没成功，已插入原文',
 			languageLabel: '识别语言',
 			languageHint: '「跟随宿主」由 Harness 每次自己判断语种，固定成你实际说的语言可以省掉这一步；实测多数长度下更快，也可能持平。',
@@ -546,6 +554,9 @@ window.__ModuleLoader__.load({
 			polishLabel: 'AI polish (experimental)',
 			polishHint: 'After transcription, clean the text with a model you already set up in DSH: drop fillers like “um”, fix misheard words, add punctuation, and turn a spoken “first, second” into a list. Adds a second or two; inserts the original if it fails.',
 			polishing: 'Polishing',
+			vocabularyLabel: 'Vocabulary',
+			vocabularyHint: 'Terms, project names and people you often say, separated by commas or new lines. When polish hears something that sounds like one, it uses your spelling.',
+			vocabularyPlaceholder: 'e.g. Claude Code, DSH, Kubernetes, Token',
 			polishFailed: 'Polish failed — inserted the original',
 			languageLabel: 'Recognition language',
 			languageHint: '"Host decides" makes Harness detect the language on every request; naming what you actually speak skips that step. Measured faster at most lengths, and never slower.',
@@ -1432,7 +1443,14 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
   border-color:var(--dsw-alias-border-l2); font-weight:500;
 }
 .dsh-htt-set-reset{height:28px; line-height:26px}
-.dsh-htt-set-number:focus-visible, .dsh-htt-set-segment:focus-visible,
+.dsh-htt-set-row-stack{flex-direction:column; align-items:stretch; gap:8px}
+.dsh-htt-set-words{
+  box-sizing:border-box; width:100%; min-height:60px; padding:6px 8px; resize:vertical;
+  border:1px solid var(--dsw-alias-border-l2); border-radius:var(--dsw-radius-sm);
+  background:var(--dsw-alias-bg-layer-1); color:inherit; font:inherit; font-size:13px; line-height:19px;
+}
+.dsh-htt-set-words::placeholder{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary))}
+.dsh-htt-set-number:focus-visible, .dsh-htt-set-words:focus-visible, .dsh-htt-set-segment:focus-visible,
 .dsh-htt-set-toggle:focus-visible, .dsh-htt-set-reset:focus-visible{
   outline-style:solid; outline-width:2px; outline-offset:2px;
   outline-color:var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));
@@ -1576,6 +1594,26 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						onClick: () => config.set('polish', !values.polish),
 					}, t(values.polish ? 'switchOn' : 'switchOff')),
 				),
+				values.polish ? h(
+					'div',
+					{ className: 'dsh-htt-set-row dsh-htt-set-row-stack', 'data-key': 'vocabulary' },
+					h(
+						'div',
+						{ className: 'dsh-htt-set-text' },
+						h('span', { className: 'dsh-htt-set-label' }, t('vocabularyLabel')),
+						h('span', { className: 'dsh-htt-set-hint' }, t('vocabularyHint')),
+					),
+					h('textarea', {
+						className: 'dsh-htt-set-words',
+						rows: 3,
+						maxLength: CONFIG_FIELDS.vocabulary.max,
+						spellCheck: false,
+						placeholder: t('vocabularyPlaceholder'),
+						value: values.vocabulary,
+						'aria-label': t('vocabularyLabel'),
+						onChange: (event) => config.set('vocabulary', event.target.value),
+					}),
+				) : null,
 				row(
 					'chord',
 					t('chordLabel'),
@@ -2389,7 +2427,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						if (config.get('polish') && runtime.polish !== null) {
 							state.busy = true;
 							show({ phase: 'transcribing', notice: '', cancelled: false, polishing: true });
-							const polished = await polishTranscript(transcript, abort.signal);
+							const polished = await polishTranscript(transcript, config.get('vocabulary'), abort.signal);
 							if (run !== state.run) return;
 							state.busy = false;
 							if (polished === null) polishMissed = true;
