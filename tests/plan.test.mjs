@@ -13,7 +13,8 @@ import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 	.replace('return { inject, apply };', 'return { inject, apply, createLivePlan };');
 let loaded = null;
-new Function('window', source)({ __ModuleLoader__: { load(module) { loaded = module; } } });
+// Node 20 (CI) has no global navigator; pass one in, as render and live do.
+new Function('window', 'navigator', source)({ __ModuleLoader__: { load(module) { loaded = module; } } }, { language: 'en-US' });
 const { createLivePlan } = loaded.factory(() => ({}));
 const none = () => { throw new Error('an unsegmented take never asks for a pause'); };
 
