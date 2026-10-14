@@ -143,6 +143,8 @@ Off by default; output quality is still being tuned. When on, a finished transcr
 - Fixes misheard words and terms (根木鹿 → 根目录, 脱肯 → Token), adds punctuation and CJK–Latin spacing
 - Turns an explicit spoken enumeration (“three things: first… second…”) into a `1. 2. 3.` list; plain narration is left alone
 
+For misheard technical words, fill in **Vocabulary** (shown once polish is on): terms, project names and people you often say, e.g. `Claude Code, DSH, Kubernetes`. Polish uses your spelling when it hears something close, and never inserts a term you did not say. Lists are laid out by code from spoken ordinals (第一 / 首先 / 一是 / first); a reply that changes too much is refused and the original is inserted.
+
 It does not rewrite, translate or answer what you said, and it **never sends** the message. It picks a light model automatically (names with Flash / Mini / Lite first) and turns reasoning off. The text goes to that model's provider, so leave it off if that matters to you.
 
 Any failure — no model, more than 15 s, an empty reply — inserts the original words and says so. Esc cancels polishing like it cancels transcription. The polish step runs on the Host through the official `@deepseek-ai/dsh-llm`; without it the plugin still works and always inserts the original.

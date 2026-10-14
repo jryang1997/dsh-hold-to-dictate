@@ -7,6 +7,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Vocabulary** for AI polish: a comma- or line-separated list of terms (up to 60) shown in
+  settings once polish is on. The model uses these spellings when it hears something that sounds
+  like one, and is told never to insert a term that was not said.
+
 ### Changed
 
 - **AI polish is more conservative.** Lists are now laid out by code from explicit ordinals
