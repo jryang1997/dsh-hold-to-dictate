@@ -188,6 +188,30 @@ window.__ModuleLoader__.load({
 			};
 		}
 
+		/**
+		 * Everything one recording owns, from press to the end of its exit motion: the live
+		 * plan and draft, the capture, the in-flight preview, and the waveform and lift the
+		 * meter keeps animating after release. A new take replaces all of it at once, so no
+		 * field can leak from the previous recording. The owned range and the abort signal
+		 * stay on the gesture: a retry reuses them after the take has ended.
+		 */
+		function createTake(liveDraft, capture) {
+			return {
+				live: createLivePlan(),
+				liveDraft,
+				capture,
+				preview: null,
+				waveLines: null,
+				waveLevels: null,
+				waveDraining: false,
+				waveAt: -Infinity,
+				recordedAt: null,
+				elapsed: 0,
+				motionAt: null,
+				lift: { position: 0, velocity: 0 },
+			};
+		}
+
 		//#region config
 
 		/**
@@ -1701,10 +1725,8 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				window.addEventListener('resize', measure);
 
 				const state = {
-					liveDraft: null,
+					take: createTake(null, null),
 					liveTimer: 0,
-					live: createLivePlan(),
-					preview: null,
 					timer: 0,
 					limit: 0,
 					noticeHold: 0,
@@ -1725,21 +1747,12 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					tolerance: ARM_TOLERANCE_PX,
 					retry: null,
 					level: 0,
-					capture: null,
 					starting: null,
 					span: null,
 					abort: null,
 					x: 0,
 					y: 0,
 					samples: [],
-					waveAt: -Infinity,
-					waveLines: null,
-					waveLevels: null,
-					waveDraining: false,
-					recordedAt: null,
-					elapsed: 0,
-					lift: { position: 0, velocity: 0 },
-					motionAt: null,
 				};
 
 				const say = (key, params) => translate(latest.current.props, key, params);
@@ -1961,9 +1974,9 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					setCancelArmed(outside || upward >= threshold);
 					applyCancel(outside ? 1 : Math.max(0, Math.min(1, upward / CANCEL_ARM_PX)));
 					// A soft 12px boundary keeps the capsule near its composer, even on a long drag.
-					state.lift.position = -12 * upward / (Math.abs(upward) + CANCEL_ARM_PX);
-					state.lift.velocity = velocity() * 12 * CANCEL_ARM_PX / (Math.abs(upward) + CANCEL_ARM_PX) ** 2;
-					root.current?.style.setProperty('--dsh-htt-lift', `${state.lift.position.toFixed(3)}px`);
+					state.take.lift.position = -12 * upward / (Math.abs(upward) + CANCEL_ARM_PX);
+					state.take.lift.velocity = velocity() * 12 * CANCEL_ARM_PX / (Math.abs(upward) + CANCEL_ARM_PX) ** 2;
+					root.current?.style.setProperty('--dsh-htt-lift', `${state.take.lift.position.toFixed(3)}px`);
 				};
 
 				const resetGesture = () => {
@@ -1976,14 +1989,14 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 
 				const cancel = (silent) => {
 					clearTimeoutOf('liveTimer');
-					const rolledBack = state.liveDraft?.rollback() !== false;
-					state.liveDraft = null;
+					const rolledBack = state.take.liveDraft?.rollback() !== false;
+					state.take.liveDraft = null;
 					clearTimer();
 					clearLimit();
 					detach();
 					dropRing();
-					const capture = state.capture;
-					state.capture = null;
+					const capture = state.take.capture;
+					state.take.capture = null;
 					state.starting = null;
 					state.active = false;
 					state.busy = false;
@@ -2014,36 +2027,36 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				const startMeter = (capture) => {
 					// A previous drain may still be pending; its timer must not stop this run.
 					clearTimeoutOf('meterStop');
-					state.waveDraining = false;
+					state.take.waveDraining = false;
 					const token = ++state.meter;
 					const tick = (now) => {
 						if (state.meter !== token) return;
 						state.raf = window.requestAnimationFrame(tick);
-						if (state.motionAt !== null && !state.active) {
-							state.lift = settleLift(state.lift.position, state.lift.velocity, Math.min(.05, (now - state.motionAt) / 1000));
-							root.current?.style.setProperty('--dsh-htt-lift', `${state.lift.position.toFixed(3)}px`);
+						if (state.take.motionAt !== null && !state.active) {
+							state.take.lift = settleLift(state.take.lift.position, state.take.lift.velocity, Math.min(.05, (now - state.take.motionAt) / 1000));
+							root.current?.style.setProperty('--dsh-htt-lift', `${state.take.lift.position.toFixed(3)}px`);
 						}
-						state.motionAt = now;
-						if (now - state.waveAt < WAVE_INTERVAL_MS) return;
-						state.waveAt = now;
-						if (state.active && state.recordedAt !== null) {
-							const elapsed = Math.floor((now - state.recordedAt) / 1000);
-							if (elapsed !== state.elapsed) {
-								state.elapsed = elapsed;
+						state.take.motionAt = now;
+						if (now - state.take.waveAt < WAVE_INTERVAL_MS) return;
+						state.take.waveAt = now;
+						if (state.active && state.take.recordedAt !== null) {
+							const elapsed = Math.floor((now - state.take.recordedAt) / 1000);
+							if (elapsed !== state.take.elapsed) {
+								state.take.elapsed = elapsed;
 								patch({ elapsed });
 							}
 						}
 						const svg = wave.current;
 						if (svg === null) return;
-						if (state.waveLines === null) {
+						if (state.take.waveLines === null) {
 							// Newest sample arrives at the right and history scrolls left, as upstream.
-							state.waveLines = Array.from(svg.querySelectorAll('line')).reverse();
-							state.waveLevels = state.waveLines.map(() => 0);
+							state.take.waveLines = Array.from(svg.querySelectorAll('line')).reverse();
+							state.take.waveLevels = state.take.waveLines.map(() => 0);
 						}
-						const lines = state.waveLines;
-						const levels = state.waveLevels;
-						const shifts = state.waveDraining ? WAVE_DRAIN_PER_TICK : 1;
-						let next = state.waveDraining ? 0 : capture.level();
+						const lines = state.take.waveLines;
+						const levels = state.take.waveLevels;
+						const shifts = state.take.waveDraining ? WAVE_DRAIN_PER_TICK : 1;
+						let next = state.take.waveDraining ? 0 : capture.level();
 						root.current?.style.setProperty('--dsh-htt-energy', Math.min(1, next * WAVE_SAMPLE_GAIN).toFixed(3));
 						for (let step = 0; step < shifts; step += 1) {
 							for (let index = 0; index < levels.length; index += 1) {
@@ -2071,11 +2084,11 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						state.meter += 1;
 						return;
 					}
-					state.waveDraining = true;
+					state.take.waveDraining = true;
 					state.meterStop = window.setTimeout(() => {
 						state.meterStop = 0;
 						state.meter += 1;
-						state.lift = { position: 0, velocity: 0 };
+						state.take.lift = { position: 0, velocity: 0 };
 						root.current?.style.setProperty('--dsh-htt-lift', '0px');
 					}, METER_SETTLE_MS);
 				};
@@ -2107,23 +2120,14 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					// was offering to retry.
 					state.retry = null;
 					state.span = actions.captureInsertion();
-					state.preview = null;
-					state.live = createLivePlan();
 					const provider = selectedProvider();
-					state.liveDraft = config.get('live') && provider?.location === 'host-local'
+					const liveDraft = config.get('live') && provider?.location === 'host-local'
 						? createLiveDraft(actions, state.span, () => latest.current.input) : null;
 					state.abort = new AbortController();
 					resetGesture();
-					const capture = createCapture(state.liveDraft !== null);
-					state.capture = capture;
-					state.waveLines = null;
-					state.waveLevels = null;
-					state.waveDraining = false;
-					state.waveAt = -Infinity;
-					state.recordedAt = null;
-					state.elapsed = 0;
-					state.motionAt = null;
-					state.lift = { position: 0, velocity: 0 };
+					const capture = createCapture(liveDraft !== null);
+					// Everything that belongs to one recording starts fresh together.
+					state.take = createTake(liveDraft, capture);
 					root.current?.style.setProperty('--dsh-htt-lift', '0px');
 					show({ phase: 'recording', notice: '', cancelled: false, elapsed: 0 });
 					// The ring has done its job; the bubble takes the story from here.
@@ -2144,14 +2148,14 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					try {
 						await starting;
 						if (run === state.run) {
-							state.recordedAt = performance.now();
-							if (state.active && state.liveDraft !== null) schedulePreview(capture, run);
+							state.take.recordedAt = performance.now();
+							if (state.active && state.take.liveDraft !== null) schedulePreview(capture, run);
 						}
 					} catch (error) {
 						if (run !== state.run) return;
 						stopMeter(false);
 						capture.dispose();
-						state.capture = null;
+						state.take.capture = null;
 						state.starting = null;
 						state.active = false;
 						state.busy = false;
@@ -2175,12 +2179,12 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				 * past it the recognizer sets its own pace, however long the take runs.
 				 */
 				function schedulePreview(capture, run) {
-					const plan = state.live;
+					const plan = state.take.live;
 					state.liveTimer = window.setTimeout(() => {
 						state.liveTimer = 0;
 						if (run !== state.run || !state.active) return;
 						const startedAt = performance.now();
-						state.preview = (async () => {
+						state.take.preview = (async () => {
 							try {
 								const slice = plan.next(() => capture.checkpoint());
 								const audio = await capture.snapshot(slice.from, slice.to);
@@ -2199,10 +2203,10 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 								// An empty transcript for a prefix that already produced words is a
 								// recognizer hiccup, never an instruction to erase what is on screen.
 								if (text === '') return 'ok';
-								return state.liveDraft.write(plan.read(slice, text, audio.to)) ? 'ok' : 'stop';
+								return state.take.liveDraft.write(plan.read(slice, text, audio.to)) ? 'ok' : 'stop';
 							} catch (error) { return 'failed'; }
 						})();
-						void state.preview.then((outcome) => {
+						void state.take.preview.then((outcome) => {
 							// One request at a time; slow inference never builds a stale queue.
 							if (outcome === 'stop' || run !== state.run || !state.active) return;
 							plan.settle(outcome, performance.now() - startedAt);
@@ -2212,17 +2216,17 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				}
 
 				async function finish() {
-					const capture = state.capture;
+					const capture = state.take.capture;
 					const abort = state.abort;
 					const span = state.span;
 					const starting = state.starting;
 					const run = state.run;
-					const liveDraft = state.liveDraft;
-					const preview = state.preview;
+					const liveDraft = state.take.liveDraft;
+					const preview = state.take.preview;
 					clearTimeoutOf('liveTimer');
 					state.active = false;
 					state.keyboard = false;
-					state.capture = null;
+					state.take.capture = null;
 					state.starting = null;
 					state.span = null;
 					clearTimer();
@@ -2570,7 +2574,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					clearLimit();
 					clearNotice();
 					clearTimeoutOf('liveTimer');
-					if (state.active || state.busy) state.liveDraft?.rollback();
+					if (state.active || state.busy) state.take.liveDraft?.rollback();
 					clearBubbleExit();
 					clearPendingExit();
 					clearTimeoutOf('ringExit');
@@ -2585,7 +2589,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					state.retry = null;
 					state.run += 1;
 					if (state.abort !== null) state.abort.abort();
-					if (state.capture !== null) state.capture.dispose();
+					if (state.take.capture !== null) state.take.capture.dispose();
 				};
 			}, []);
 

@@ -9,6 +9,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **One recording is one take.** The live plan and draft, the capture, the in-flight preview,
+  and the waveform and lift that keep animating after release now live on a single take object
+  that `begin()` replaces at once (`createTake()`), instead of twelve fields reset one by one.
+  The gesture state drops from 39 fields to 28. No behaviour change.
 - **The live-preview plan is its own module.** Which slice of the take a preview reads, how a
   transcript folds into the draft, the commit-at-pause rule, and the refresh cadence (round-trip
   pacing, failure backoff, starvation) now live in a pure `createLivePlan()`; the preview loop
