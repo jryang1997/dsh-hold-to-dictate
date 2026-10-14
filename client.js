@@ -113,6 +113,81 @@ window.__ModuleLoader__.load({
 			};
 		}
 
+		/**
+		 * The live-preview plan for one take: which slice of the recording the next preview reads,
+		 * what the draft shows once it answers, and how long to wait before asking again.
+		 *
+		 * Pure on purpose. The preview loop owns the timers, the audio and the Host call; this
+		 * owns every decision between them, so the cadence and the commit-at-pause rules can be
+		 * tested as a sequence of calls instead of through a mounted gesture.
+		 *
+		 * - `next(checkpoint)` picks the window `{ from, to }` to snapshot (`to: null` is "now").
+		 *   `checkpoint()` is only asked once the take is segmented.
+		 * - `starve(audio)` is `'wait'` or `'stop'` for an empty snapshot, `null` once audio arrives.
+		 * - `read(window, text, audioTo)` folds a transcript of that window into the draft text.
+		 * - `settle(outcome, rtt)` takes `'ok' | 'wait' | 'failed'` and returns the next wait;
+		 *   `wait` holds it for the first preview.
+		 */
+		function createLivePlan() {
+			let wait = LIVE_STARVE_RETRY_MS;
+			let interval = LIVE_MIN_INTERVAL_MS;
+			let starved = 0;
+			// Once a whole-take preview is expensive, stop re-reading the take: commit at the last
+			// sentence-length pause and read forward from there. The window only starts at a commit
+			// point, and a commit point is the middle of a pause, so a segment never begins on a cut
+			// through a word. Until the first commit the window is still the whole take, and a take
+			// with no sentence-length pause never commits at all.
+			let segmented = false;
+			let committed = '';
+			let anchor = 0;
+			let anchorAtPause = false;
+			return {
+				get wait() { return wait; },
+				next(checkpoint) {
+					const at = segmented ? checkpoint() : 0;
+					const committing = segmented && at > anchor + LIVE_SEGMENT_MIN_SECONDS;
+					const whole = !anchorAtPause;
+					return { from: whole ? 0 : anchor, to: committing ? at : null, whole, committing };
+				},
+				starve(audio) {
+					// The first previews are deliberately early. The worklet holds nothing until it has
+					// MIN_SECONDS, and waiting for that is a reason to come back, not a reason to
+					// abandon the recording.
+					if (audio) { starved = 0; return null; }
+					return ++starved > LIVE_STARVE_LIMIT ? 'stop' : 'wait';
+				},
+				read(slice, text, audioTo) {
+					if (slice.committing) {
+						// Everything up to the pause is frozen for the rest of the take; the window's
+						// start moves there, so the next preview is short again. The first commit still
+						// covers the whole take, so it replaces rather than appends.
+						committed = slice.whole ? text : committed + text;
+						anchor = slice.to;
+						anchorAtPause = true;
+						return committed;
+					}
+					// A window that still starts at zero carries the whole take, so its result is the
+					// text; one that starts at a commit point carries only the new words.
+					if (!slice.whole) return committed + text;
+					committed = text;
+					anchor = audioTo;
+					return text;
+				},
+				settle(outcome, rtt) {
+					// A take long enough for a preview to cost this much is the one worth segmenting;
+					// shorter ones stay on the accurate whole-take path.
+					if (rtt > LIVE_SEGMENT_AFTER_MS) segmented = true;
+					interval = outcome === 'failed'
+						? Math.min(LIVE_MAX_BACKOFF_MS, Math.max(LIVE_MIN_INTERVAL_MS, interval * 2))
+						: Math.max(LIVE_MIN_INTERVAL_MS, rtt * LIVE_INTERVAL_SLACK);
+					// The timer only starts once the reply arrives, so the interval is the wait *plus*
+					// the round trip, not the wait alone.
+					wait = outcome === 'wait' ? LIVE_STARVE_RETRY_MS : Math.max(0, interval - rtt);
+					return wait;
+				},
+			};
+		}
+
 		//#region config
 
 		/**
@@ -1628,13 +1703,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				const state = {
 					liveDraft: null,
 					liveTimer: 0,
-					liveWait: LIVE_STARVE_RETRY_MS,
-					liveInterval: LIVE_MIN_INTERVAL_MS,
-					liveStarved: 0,
-					liveSegmented: false,
-					liveCommitted: '',
-					liveAnchor: 0,
-					liveAnchorAtPause: false,
+					live: createLivePlan(),
 					preview: null,
 					timer: 0,
 					limit: 0,
@@ -2039,13 +2108,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					state.retry = null;
 					state.span = actions.captureInsertion();
 					state.preview = null;
-					state.liveWait = LIVE_STARVE_RETRY_MS;
-					state.liveInterval = LIVE_MIN_INTERVAL_MS;
-					state.liveStarved = 0;
-					state.liveSegmented = false;
-					state.liveCommitted = '';
-					state.liveAnchor = 0;
-					state.liveAnchorAtPause = false;
+					state.live = createLivePlan();
 					const provider = selectedProvider();
 					state.liveDraft = config.get('live') && provider?.location === 'host-local'
 						? createLiveDraft(actions, state.span, () => latest.current.input) : null;
@@ -2112,29 +2175,18 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				 * past it the recognizer sets its own pace, however long the take runs.
 				 */
 				function schedulePreview(capture, run) {
-					const period = state.liveWait;
+					const plan = state.live;
 					state.liveTimer = window.setTimeout(() => {
 						state.liveTimer = 0;
 						if (run !== state.run || !state.active) return;
 						const startedAt = performance.now();
 						state.preview = (async () => {
 							try {
-								// Once a whole-take preview is expensive, stop re-reading the take: commit
-								// at the last sentence-length pause and read forward from there. The
-								// window only starts at a commit point, and a commit point is the middle
-								// of a pause, so a segment never begins on a cut through a word. Until the
-								// first commit the window is still the whole take, and a take with no
-								// sentence-length pause never commits at all.
-								const at = state.liveSegmented ? capture.checkpoint() : 0;
-								const committing = state.liveSegmented && at > state.liveAnchor + LIVE_SEGMENT_MIN_SECONDS;
-								const whole = !state.liveAnchorAtPause;
-								const audio = await capture.snapshot(whole ? 0 : state.liveAnchor, committing ? at : null);
+								const slice = plan.next(() => capture.checkpoint());
+								const audio = await capture.snapshot(slice.from, slice.to);
 								if (run !== state.run || !state.active) return 'stop';
-								// The first previews are deliberately early. The worklet holds nothing
-								// until it has MIN_SECONDS, and waiting for that is a reason to come
-								// back, not a reason to abandon the recording.
-								if (!audio) return ++state.liveStarved > LIVE_STARVE_LIMIT ? 'stop' : 'wait';
-								state.liveStarved = 0;
+								const starved = plan.starve(audio);
+								if (starved) return starved;
 								if (audio.buffer.byteLength > maxBytes()) return 'stop';
 								const transcribe = resolveTranscribe(latest.current.props);
 								if (!transcribe) return 'stop';
@@ -2147,39 +2199,16 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 								// An empty transcript for a prefix that already produced words is a
 								// recognizer hiccup, never an instruction to erase what is on screen.
 								if (text === '') return 'ok';
-								if (committing) {
-									// Everything up to the pause is frozen for the rest of the take; the
-									// window's start moves there, so the next preview is short again. The
-									// first commit still covers the whole take, so it replaces rather than
-									// appends.
-									state.liveCommitted = whole ? text : state.liveCommitted + text;
-									state.liveAnchor = at;
-									state.liveAnchorAtPause = true;
-									return state.liveDraft.write(state.liveCommitted) ? 'ok' : 'stop';
-								}
-								// A window that still starts at zero carries the whole take, so its result is
-								// the text; one that starts at a commit point carries only the new words.
-								const rendered = whole ? text : state.liveCommitted + text;
-								if (whole) { state.liveCommitted = text; state.liveAnchor = audio.to; }
-								return state.liveDraft.write(rendered) ? 'ok' : 'stop';
+								return state.liveDraft.write(plan.read(slice, text, audio.to)) ? 'ok' : 'stop';
 							} catch (error) { return 'failed'; }
 						})();
 						void state.preview.then((outcome) => {
 							// One request at a time; slow inference never builds a stale queue.
 							if (outcome === 'stop' || run !== state.run || !state.active) return;
-							const rtt = performance.now() - startedAt;
-							// A take long enough for a preview to cost this much is the one worth
-							// segmenting; shorter ones stay on the accurate whole-take path.
-							if (!state.liveSegmented && rtt > LIVE_SEGMENT_AFTER_MS) state.liveSegmented = true;
-							state.liveInterval = outcome === 'failed'
-								? Math.min(LIVE_MAX_BACKOFF_MS, Math.max(LIVE_MIN_INTERVAL_MS, state.liveInterval * 2))
-								: Math.max(LIVE_MIN_INTERVAL_MS, rtt * LIVE_INTERVAL_SLACK);
-							state.liveWait = outcome === 'wait'
-								? LIVE_STARVE_RETRY_MS
-								: Math.max(0, state.liveInterval - rtt);
+							plan.settle(outcome, performance.now() - startedAt);
 							schedulePreview(capture, run);
 						});
-					}, period);
+					}, plan.wait);
 				}
 
 				async function finish() {

@@ -52,7 +52,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node tests/locales.test.mjs && node tests/render.test.mjs && node tests/live.test.mjs && node tests/package.test.mjs",
+    "test": "node tests/locales.test.mjs && node tests/render.test.mjs && node tests/plan.test.mjs && node tests/live.test.mjs && node tests/package.test.mjs",
     "check": "node --check index.js && node --check client.js && npm test"
   },
   "dsh": {
