@@ -9,6 +9,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Draft context** for AI polish: up to 400 characters of what is already in the draft before the
+  dictation point go to the model in a separate block, so names, terms and tone match. The model is
+  told never to repeat or edit it, and a reply that copies it is caught by the stray guard.
 - **Vocabulary** for AI polish: a comma- or line-separated list of terms (up to 60) shown in
   settings once polish is on. The model uses these spellings when it hears something that sounds
   like one, and is told never to insert a term that was not said.

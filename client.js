@@ -270,6 +270,7 @@ window.__ModuleLoader__.load({
 				polishEndpoint('polish', [
 					{ name: 'transcript', wire: 'transcript', source: 'json', codec: STRING_CODEC },
 					{ name: 'vocabulary', wire: 'vocabulary', source: 'json', codec: STRING_CODEC },
+					{ name: 'context', wire: 'context', source: 'json', codec: STRING_CODEC },
 				], true),
 				polishEndpoint('describe', [], false),
 			],
@@ -436,10 +437,10 @@ window.__ModuleLoader__.load({
 		 * no model, a timeout, a cancelled take or an odd reply all land here, because a
 		 * cleanup is never worth losing what the user said.
 		 */
-		const polishTranscript = async (transcript, vocabulary, signal) => {
+		const polishTranscript = async (transcript, vocabulary, context, signal) => {
 			if (runtime.polish === null) return null;
 			try {
-				const result = await runtime.polish.polish(transcript, vocabulary, signal);
+				const result = await runtime.polish.polish(transcript, vocabulary, context, signal);
 				const text = result?.ok === true ? String(result.value?.text ?? '').trim() : '';
 				return text === '' ? null : text;
 			} catch (error) {
@@ -2427,7 +2428,13 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						if (config.get('polish') && runtime.polish !== null) {
 							state.busy = true;
 							show({ phase: 'transcribing', notice: '', cancelled: false, polishing: true });
-							const polished = await polishTranscript(transcript, config.get('vocabulary'), abort.signal);
+							// What the user already wrote before the dictation point helps with names
+							// and tone. Only the part before `span.start`: a live preview may have
+							// rewritten the range itself.
+							const draft = latest.current.input?.draft;
+							const context = typeof draft === 'string' && span && span.start > 0
+								? draft.slice(Math.max(0, span.start - 600), span.start) : '';
+							const polished = await polishTranscript(transcript, config.get('vocabulary'), context, abort.signal);
 							if (run !== state.run) return;
 							state.busy = false;
 							if (polished === null) polishMissed = true;
