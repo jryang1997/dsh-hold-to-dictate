@@ -53,7 +53,7 @@ window.__ModuleLoader__.load({
 		/** Kept below the Host default (120 s) so the Host never rejects on duration. */
 		const MAX_SECONDS = 110;
 		/** This build's version; tests/package.test.mjs keeps it equal to package.json. */
-		const VERSION = '2.4.0';
+		const VERSION = '2.4.1';
 		const REPO_URL = 'https://github.com/jryang1997/dsh-hold-to-dictate';
 		const LATEST_RELEASE_API = 'https://api.github.com/repos/jryang1997/dsh-hold-to-dictate/releases/latest';
 		/** Kept below the Host default (4 MiB) so the Host never rejects on size. */
@@ -444,17 +444,41 @@ window.__ModuleLoader__.load({
 		 * no model, a timeout, a cancelled take or an odd reply all land here, because a
 		 * cleanup is never worth losing what the user said.
 		 */
+		/**
+		 * Polish one transcript: `{ text }` on success, `{ text: null, reason }` otherwise.
+		 * The reason is a short code the notice turns into words, and the full attempt list
+		 * goes to the console so a bug report can include it.
+		 */
 		const polishTranscript = async (transcript, vocabulary, context, signal) => {
 			const model = config.get('polishModel');
-			if (runtime.polish === null) return null;
+			if (runtime.polish === null) return { text: null, reason: 'unavailable' };
 			try {
 				const result = await runtime.polish.polish(transcript, vocabulary, context, model, signal);
-				const text = result?.ok === true ? String(result.value?.text ?? '').trim() : '';
-				return text === '' ? null : text;
+				if (result?.ok !== true) {
+					const message = String(result?.error?.message ?? result?.error ?? '');
+					console.warn('[hold-to-dictate] polish failed', result?.error);
+					return { text: null, reason: /^polish\/([a-z-]+)/.exec(message)?.[1] ?? 'remote' };
+				}
+				const text = String(result.value?.text ?? '').trim();
+				if (text !== '') return { text };
+				if (result.value?.tried) console.warn('[hold-to-dictate] polish failed', result.value.tried);
+				return { text: null, reason: String(result.value?.error ?? 'empty') };
 			} catch (error) {
-				return null;
+				console.warn('[hold-to-dictate] polish failed', error);
+				return { text: null, reason: 'remote' };
 			}
 		};
+		/** Locale key that explains a polish failure reason code. */
+		const POLISH_REASONS = {
+			timeout: 'polishWhyTimeout',
+			strayed: 'polishWhyStrayed',
+			'no-model': 'polishWhyNoModel',
+			empty: 'polishWhyEmpty',
+			'too-long': 'polishWhyTooLong',
+			remote: 'polishWhyRemote',
+			unavailable: 'polishWhyRemote',
+		};
+		const polishReasonKey = (reason) => POLISH_REASONS[reason] ?? 'polishWhyModel';
 		/** The provider entry the Host selected, or undefined before its limits arrive. */
 		const selectedProvider = () => runtime.limits?.providers?.find((entry) => entry.id === runtime.limits.selection?.providerId);
 		/** -1, 0 or 1 for two `x.y.z` versions; a leading `v` and any suffix are ignored. */
@@ -548,7 +572,14 @@ window.__ModuleLoader__.load({
 			polishModelHint: '默认自动挑一个又快又便宜的文本模型。选中的模型被移除后，会自动回到自动选择。',
 			polishModelAuto: '自动',
 			polishModelMissing: '已不可用',
-			polishFailed: '润色没成功，已插入原文',
+			polishFailed: '润色没成功（{reason}），已插入原文',
+			polishWhyTimeout: '模型超时',
+			polishWhyStrayed: '改动太大，没敢用',
+			polishWhyNoModel: '没有可用的文本模型',
+			polishWhyEmpty: '模型没有返回内容',
+			polishWhyTooLong: '内容太长',
+			polishWhyRemote: '润色服务没有响应',
+			polishWhyModel: '模型请求出错',
 			languageLabel: '识别语言',
 			languageHint: '「跟随宿主」由 Harness 每次自己判断语种，固定成你实际说的语言可以省掉这一步；实测多数长度下更快，也可能持平。',
 			languageHost: '跟随宿主',
@@ -621,7 +652,14 @@ window.__ModuleLoader__.load({
 			polishModelHint: 'Auto picks a fast, inexpensive text model. If the chosen model is removed, polish goes back to auto.',
 			polishModelAuto: 'Auto',
 			polishModelMissing: 'unavailable',
-			polishFailed: 'Polish failed — inserted the original',
+			polishFailed: 'Polish failed ({reason}) — inserted the original',
+			polishWhyTimeout: 'the model timed out',
+			polishWhyStrayed: 'it changed too much to trust',
+			polishWhyNoModel: 'no text model is configured',
+			polishWhyEmpty: 'the model returned nothing',
+			polishWhyTooLong: 'too long',
+			polishWhyRemote: 'the polish service did not answer',
+			polishWhyModel: 'the model request failed',
 			languageLabel: 'Recognition language',
 			languageHint: '"Host decides" makes Harness detect the language on every request; naming what you actually speak skips that step. Measured faster at most lengths, and never slower.',
 			languageHost: 'Host decides',
@@ -2582,7 +2620,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						// Optional cleanup. It runs inside the same take: Esc or a new press aborts
 						// it like the transcription, and every failure falls back to the words.
 						let text = transcript;
-						let polishMissed = false;
+						let polishMissed = '';
 						if (config.get('polish') && runtime.polish !== null) {
 							state.busy = true;
 							show({ phase: 'transcribing', notice: '', cancelled: false, polishing: true });
@@ -2595,8 +2633,8 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 							const polished = await polishTranscript(transcript, config.get('vocabulary'), context, abort.signal);
 							if (run !== state.run) return;
 							state.busy = false;
-							if (polished === null) polishMissed = true;
-							else text = polished;
+							if (polished.text === null) polishMissed = polished.reason || 'model-error';
+							else text = polished.text;
 						}
 						const actions = latest.current.props.inputActions;
 						if (actions === undefined || (liveDraft ? liveDraft.write(text) : actions.insertText(text, span)) !== true) {
@@ -2606,7 +2644,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 							return;
 						}
 						state.retry = null;
-						if (polishMissed) show({ phase: 'notice', notice: say('polishFailed'), tone: 'info', cancelled: false });
+						if (polishMissed !== '') show({ phase: 'notice', notice: say('polishFailed', { reason: say(polishReasonKey(polishMissed)) }), tone: 'info', cancelled: false });
 						else show({ phase: 'complete', notice: '', cancelled: false });
 					} catch (error) {
 						if (run !== state.run) return;

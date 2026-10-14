@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {
 	POLISH_PROMPT, POLISH_SERVICE, POLISH_NAMESPACE, MAX_TRANSCRIPT_CHARS,
-	pickRoute, listRoutes, collectText, tidyOutput, polishText, polishUserText, createPolishService,
+	pickRoute, rankRoutes, polishCandidates, failureReason, isOfficial, listRoutes, collectText, tidyOutput, polishText, polishUserText, createPolishService,
 } from '../polish.js';
 
 const route = (model, modelName = model, modalities) => ({ provider: 'p', providerName: 'P', model, modelName, modalities });
@@ -14,6 +14,26 @@ assert.equal(pickRoute([route('o-reasoner'), route('plain')]).model, 'plain');
 assert.equal(pickRoute([route('vision-mini', 'v', ['image']), route('x')]).model, 'x');
 assert.equal(pickRoute([route('only-pro', 'Pro')]).model, 'only-pro');
 assert.equal(pickRoute([]), null);
+
+// Official DeepSeek providers win over third-party gateways serving the same model.
+{
+	const gateway = { provider: 'bai', providerName: 'B.AI', model: 'deepseek-flash', modelName: 'DeepSeek V4.1 Flash (B.AI)' };
+	const official = { provider: 'deepseek-official', providerName: 'DeepSeek', model: 'deepseek-flash', modelName: 'DeepSeek-V4.1-Flash' };
+	const pro = { provider: 'deepseek-official', providerName: 'DeepSeek', model: 'deepseek-v4-pro', modelName: 'DeepSeek-V4-Pro' };
+	assert.ok(isOfficial(official) && !isOfficial(gateway));
+	assert.equal(pickRoute([gateway, pro, official]), official);
+	// Even a slow official model beats a fast gateway: it can switch reasoning off.
+	assert.equal(pickRoute([gateway, pro]), pro);
+	assert.deepEqual(rankRoutes([gateway, pro, official]), [official, pro, gateway]);
+	// Candidates: the user's choice first, then the ranking, capped at two attempts.
+	assert.deepEqual(polishCandidates([gateway, pro, official], 'bai/deepseek-flash'), [gateway, official]);
+	assert.deepEqual(polishCandidates([gateway, pro, official], ''), [official, pro]);
+	assert.deepEqual(polishCandidates([gateway, pro, official], 'gone/model'), [official, pro]);
+	assert.deepEqual(polishCandidates([], 'x'), []);
+	assert.equal(failureReason(new Error('polish/timeout')), 'timeout');
+	assert.equal(failureReason(new Error('401 Unauthorized')), 'model-error');
+	assert.equal(failureReason(undefined), 'model-error');
+}
 
 const stream = async function* (chunks) { for (const chunk of chunks) yield chunk; };
 
@@ -50,7 +70,15 @@ const fakeLlm = (reply, { efforts = ['off', 'high'], seen = {} } = {}) => ({
 	resolveModelInfo: async () => ({ reasoning: { efforts: efforts.map((id) => ({ id })) } }),
 	prepareCall: async (config) => {
 		seen.config = config;
-		return { config, stream: (options) => { seen.options = options; return reply(options); } };
+		// Same rule as the Host's prepared call: stream options must carry the prepared
+		// controls unchanged, or the dispatch is refused.
+		return { config, stream: (options) => {
+			for (const key of ['provider', 'model', 'reasoningEffort', 'temperature', 'maxTokens']) {
+				if (options[key] !== config[key]) throw new Error('prepared LLM call config changed before adapter dispatch');
+			}
+			seen.options = options;
+			return reply(options);
+		} };
 	},
 });
 const createUserMessage = (message) => ({ role: 'user', ...message });
@@ -60,7 +88,7 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 	const llm = fakeLlm(() => stream([{ type: 'text-delta', text: '帮我看一下根目录。' }]), { seen });
 	const out = await polishText({ llm, createUserMessage }, pickRoute(await listRoutes(llm)), ' 嗯帮我看一下跟目录 ');
 	assert.equal(out, '帮我看一下根目录。');
-	assert.deepEqual(seen.config, { provider: 'ds', model: 'deepseek-flash', reasoningEffort: 'off' }, 'cheapest route, reasoning off');
+	assert.deepEqual(seen.config, { provider: 'ds', model: 'deepseek-flash', reasoningEffort: 'off', temperature: 0 }, 'cheapest route, reasoning off, temperature pinned in the prepared config');
 	assert.equal(seen.options.system, POLISH_PROMPT);
 	assert.equal(seen.options.messages[0].content[0].text, '<transcript>\n嗯帮我看一下跟目录\n</transcript>');
 }
