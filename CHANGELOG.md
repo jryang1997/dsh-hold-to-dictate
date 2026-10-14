@@ -7,6 +7,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-10-14
+
+### Fixed
+
+- **AI polish failed every time since 2.3.x.** The temperature was set on the stream request but
+  not on the prepared call, and the Host refuses to dispatch a prepared call whose controls changed
+  ("prepared LLM call config changed before adapter dispatch"). Temperature now goes into the
+  prepared config. The test double enforces the same rule, so this cannot regress silently.
+
+### Changed
+
+- **Official DeepSeek first.** Auto now prefers DeepSeek's own providers (API key or account) over
+  third-party gateways serving the same model; they can switch reasoning off, so a cleanup stays fast.
+- **One automatic retry.** If the chosen model fails, polish tries the next-best model once
+  (official first) before giving up.
+- **Failures say why**: timed out, changed too much, no text model, model error, or the service did
+  not answer. Every attempt is logged to the console for bug reports.
+
 ## [2.4.0] - 2026-10-14
 
 ### Added
@@ -481,7 +499,8 @@ First release — the hold-to-talk gesture and everything it needs to be safe to
 - Localised `zh` / `en`; light and dark themes; graceful degradation when a host contract is
   missing.
 
-[Unreleased]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.4.1...HEAD
+[2.4.1]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.1.0...v2.2.0

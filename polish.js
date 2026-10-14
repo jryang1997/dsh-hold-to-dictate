@@ -117,12 +117,55 @@ const SLOW = /reason|think|r1\b|pro\b|opus|max\b/i;
  * @param routes - `{ provider, providerName, model, modelName }` in registry order.
  */
 export function pickRoute(routes) {
-	const text = routes.filter((route) => route.modalities === undefined || route.modalities.includes('text'));
+	return rankRoutes(routes)[0] ?? null;
+}
+
+/**
+ * DeepSeek's own providers (API key and account sign-in). A cleanup prefers them over
+ * third-party gateways: they expose a "reasoning off" setting, so a two-second cleanup
+ * does not turn into a long think, and they are what most users actually pay for.
+ */
+export const OFFICIAL_PROVIDERS = ['deepseek-official', 'deepseek-account'];
+export const isOfficial = (route) => OFFICIAL_PROVIDERS.includes(route?.provider);
+
+/**
+ * Text routes, best first: official before third-party, then fast before plain before
+ * slow reasoners. Ties keep registry order.
+ */
+export function rankRoutes(routes) {
 	const label = (route) => `${route.model} ${route.modelName}`;
-	return text.find((route) => FAST.test(label(route)) && !SLOW.test(label(route)))
-		?? text.find((route) => !SLOW.test(label(route)))
-		?? text[0]
-		?? null;
+	const speed = (route) => (SLOW.test(label(route)) ? 2 : FAST.test(label(route)) ? 0 : 1);
+	const score = (route) => (isOfficial(route) ? 0 : 3) + speed(route);
+	return routes
+		.filter((route) => route.modalities === undefined || route.modalities.includes('text'))
+		.map((route, index) => ({ route, index, score: score(route) }))
+		.sort((a, b) => a.score - b.score || a.index - b.index)
+		.map((entry) => entry.route);
+}
+
+/** A failed cleanup is retried once on the next-best model, never more. */
+export const MAX_POLISH_ATTEMPTS = 2;
+
+/**
+ * The models one cleanup tries, in order: the user's choice when it is still configured,
+ * then the automatic ranking, without repeats.
+ */
+export function polishCandidates(routes, preferred = '', limit = MAX_POLISH_ATTEMPTS) {
+	const ranked = rankRoutes(routes);
+	const chosen = typeof preferred === 'string' && preferred !== ''
+		? ranked.find((route) => routeKey(route) === preferred) : undefined;
+	const ordered = chosen === undefined ? ranked : [chosen, ...ranked.filter((route) => route !== chosen)];
+	return ordered.slice(0, limit);
+}
+
+/**
+ * A short, stable reason code for a failed cleanup, safe to show the user:
+ * `polish/<code>` errors keep their code, anything the provider threw is `model-error`.
+ */
+export function failureReason(error) {
+	const message = String(error?.message ?? error ?? '');
+	const code = /^polish\/([a-z-]+)/.exec(message);
+	return code ? code[1] : 'model-error';
 }
 
 /** Every provider's models, skipping a provider whose listing fails. */
@@ -332,7 +375,11 @@ export async function polishText(deps, route, transcript, signal, terms = [], co
 	if (signal?.aborted) forward();
 	else signal?.addEventListener('abort', forward, { once: true });
 	try {
-		const config = await callConfig(deps.llm, route, timeout.signal);
+		// Every control goes into the prepared config, temperature included: the Host's
+		// prepared call refuses to dispatch when the stream options differ from it
+		// (`callConfigEquals`), which is what failed every cleanup after temperature was
+		// only added at the stream step.
+		const config = { ...await callConfig(deps.llm, route, timeout.signal), temperature: 0 };
 		timeout.signal.throwIfAborted();
 		const prepared = await deps.llm.prepareCall(config, timeout.signal);
 		// Adapters only watch for a future abort; one that already happened must stop here.
@@ -345,7 +392,6 @@ export async function polishText(deps, route, transcript, signal, terms = [], co
 			...prepared.config,
 			messages: [message],
 			system: systemPrompt(terms),
-			temperature: 0,
 			signal: timeout.signal,
 		}), raw.length * MAX_OUTPUT_FACTOR + 200));
 		if (output === '') throw new Error('polish/empty');
@@ -416,13 +462,27 @@ export function createPolishService(protocol, llmModule) {
 		 * user's comma- or line-separated list of preferred spellings (may be empty).
 		 */
 		async polish(transcript, vocabulary, context, model, signal) {
-			const route = await this.route(model);
-			if (route === null) throw new Error('polish/no-model');
-			const text = await polishText(
-				{ llm: this.ctx.llm, createUserMessage: llmModule.createUserMessage },
-				route, transcript, signal, parseVocabulary(vocabulary), context,
-			);
-			return { text, model: route.modelName };
+			const candidates = polishCandidates(await listRoutes(this.ctx.llm), model);
+			if (candidates.length === 0) throw new Error('polish/no-model');
+			const deps = { llm: this.ctx.llm, createUserMessage: llmModule.createUserMessage };
+			const terms = parseVocabulary(vocabulary);
+			const tried = [];
+			for (const route of candidates) {
+				try {
+					const text = await polishText(deps, route, transcript, signal, terms, context);
+					return { text, model: route.modelName };
+				} catch (error) {
+					if (signal?.aborted) throw error;
+					const reason = failureReason(error);
+					tried.push({ model: route.modelName, reason, detail: String(error?.message ?? error).slice(0, 200) });
+					// The input itself is the problem; another model would fail the same way.
+					if (reason === 'too-long' && String(transcript ?? '').trim().length > MAX_TRANSCRIPT_CHARS) break;
+				}
+			}
+			// Resolve rather than throw: the reason survives the Remote boundary as plain data,
+			// so the Client can say why instead of a bare "failed".
+			const last = tried[tried.length - 1];
+			return { text: '', model: last?.model ?? '', error: last?.reason ?? 'model-error', tried };
 		}
 	}
 	markRemote(protocol, PolishService, 'describe');
