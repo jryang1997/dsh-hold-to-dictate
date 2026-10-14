@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Longest recording** setting (15–600 s, default 110 s). A take stops and is transcribed at
+  that length, and never goes past the limit the speech service reports.
 - **Polish model** picker in settings (shown once polish is on): Auto, which names the model it
   would pick, or any configured text model. A chosen model that is later removed falls back to Auto.
 - **Draft context** for AI polish: up to 400 characters of what is already in the draft before the
