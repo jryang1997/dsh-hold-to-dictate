@@ -299,6 +299,7 @@ window.__ModuleLoader__.load({
 		const CONFIG_FIELDS = {
 			holdMs: { fallback: HOLD_MS, min: 150, max: 800, step: 10, kind: 'number' },
 			touchHoldMs: { fallback: 450, min: 250, max: 1200, step: 10, kind: 'number' },
+			maxRecordSeconds: { fallback: MAX_SECONDS, min: 15, max: 600, step: 5, kind: 'number' },
 			motion: { fallback: 'full', oneOf: ['full', 'calm'], kind: 'choice' },
 			hint: { fallback: true, kind: 'switch' },
 			chord: { fallback: 'Control+Shift+Space', oneOf: Object.keys(CHORDS), kind: 'choice' },
@@ -452,8 +453,11 @@ window.__ModuleLoader__.load({
 		};
 		/** The provider entry the Host selected, or undefined before its limits arrive. */
 		const selectedProvider = () => runtime.limits?.providers?.find((entry) => entry.id === runtime.limits.selection?.providerId);
-		/** Recording cap: the smaller of the Host's limit and this plugin's ceiling. */
-		const maxSeconds = () => Math.min(MAX_SECONDS, runtime.limits?.maxDurationSeconds ?? MAX_SECONDS);
+		/**
+		 * Recording cap: the user's setting, never above the Host's own limit. Until the Host
+		 * reports one, the plugin's safe default ceiling applies.
+		 */
+		const maxSeconds = () => Math.min(config.get('maxRecordSeconds'), runtime.limits?.maxDurationSeconds ?? MAX_SECONDS);
 		/** Audio cap: the smaller of the Host's limit and this plugin's ceiling. */
 		const maxBytes = () => Math.min(MAX_BYTES, runtime.limits?.maxAudioBytes ?? MAX_BYTES);
 
@@ -484,6 +488,8 @@ window.__ModuleLoader__.load({
 			holdMsHint: '按住多久才开始录音。手慢就调长一点，误触多就调短一点。',
 			touchHoldMsLabel: '触屏按住时长',
 			touchHoldMsHint: '手指按住多久才开始录音。触摸屏上长按同时也是选词，所以这里默认更长。',
+			maxRecordSecondsLabel: '最长录音（秒）',
+			maxRecordSecondsHint: '一次最长录多久，到点自动结束并转写。不会超过语音服务自己的上限（默认 120 秒）。',
 			motionLabel: '动效',
 			motionHint: '「精简」会去掉位移与缩放，只保留淡入淡出。',
 			motionFull: '完整',
@@ -546,6 +552,8 @@ window.__ModuleLoader__.load({
 			holdMsHint: 'How long the press must stay still. Longer if your hand is slow, shorter if it fires by accident.',
 			touchHoldMsLabel: 'Hold duration on a touch screen',
 			touchHoldMsHint: 'How long a finger must stay still. Longer by default, because a long press is also how a touch screen selects a word.',
+			maxRecordSecondsLabel: 'Longest recording (seconds)',
+			maxRecordSecondsHint: 'A take stops and is transcribed at this length. It never goes past the speech service\'s own limit (120 s by default).',
 			motionLabel: 'Motion',
 			motionHint: 'Calm drops movement and scale, and keeps the cross-fades.',
 			motionFull: 'Full',
@@ -1549,6 +1557,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				h('div', { className: 'dsh-htt-set-intro' }, t('settingsIntro')),
 				numberRow('holdMs'),
 				numberRow('touchHoldMs'),
+				numberRow('maxRecordSeconds'),
 				row(
 					'motion',
 					t('motionLabel'),
