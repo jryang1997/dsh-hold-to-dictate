@@ -7,6 +7,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **AI polish is more conservative.** Lists are now laid out by code from explicit ordinals
+  (第一/第二, 首先/其次/最后, 一是/二是, first/second) instead of by the model, so real
+  lists are not missed and plain sentences (第一次, 第二天) are not split. The model only fixes a
+  word that makes no sense as heard, runs at temperature 0, and a reply that invents too much
+  or drops half the content is refused in favour of the original.
+
 ## [2.3.0] - 2026-10-14
 
 ### Added

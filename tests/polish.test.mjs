@@ -122,4 +122,29 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 	assert.equal(registered, 0, 'no protocol package in this test env, so nothing is registered');
 }
 
+// Lists are laid out by code, not the model: explicit ordinals only, in order.
+{
+	const { structureList: list, strayed: off } = await import('../polish.js');
+	assert.equal(list('明天要确认三件事：第一，预算；第二，接口文档；第三，上线时间。'), '明天要确认三件事：\n1. 预算\n2. 接口文档\n3. 上线时间');
+	assert.equal(list('我有两点意见：第一点是预算不够，第二点是时间太紧。其他的明天再说。'), '我有两点意见：\n1. 预算不够\n2. 时间太紧\n\n其他的明天再说。');
+	assert.equal(list('首先打开设置，其次找到插件，最后点安装。'), '1. 打开设置\n2. 找到插件\n3. 点安装');
+	assert.equal(list('一是成本高，二是周期长。'), '1. 成本高\n2. 周期长');
+	assert.equal(list('Two things: first, update the docs; second, bump the version. Thanks.'), 'Two things:\n1. Update the docs\n2. Bump the version\n\nThanks.');
+	for (const plain of ['这是我第一次来，第二天就走了。', '他是第一名。', 'First of all I think it works.', '只有第一点重要。']) {
+		assert.equal(list(plain), plain, `not a list: ${plain}`);
+	}
+	// Straying: fixing a word and deleting fillers is fine; rewriting is not.
+	assert.equal(off('嗯那个帮我看一下跟目录下面的西克瑞特 key', '帮我看一下根目录下面的 secret key。'), false);
+	assert.equal(off('嗯嗯就是那个我觉得还行吧', '我觉得还行吧。'), false);
+	assert.equal(off('我们下周三和老王对一下进度', '下周三与王先生同步项目进展情况。'), true);
+	// A strayed reply is refused, so the Client inserts the original.
+	const llm = fakeLlm(() => stream([{ type: 'text-delta', text: '完全不同的一句话，跟原文毫无关系。' }]));
+	await assert.rejects(polishText({ llm, createUserMessage }, route('deepseek-flash'), '我们下周三和老王对一下进度'), /strayed/);
+	// The model's ordinals are laid out after it replies, and temperature is pinned.
+	const seen = {};
+	const lister = fakeLlm(() => stream([{ type: 'text-delta', text: '两件事：第一，预算；第二，文档。' }]), { seen });
+	assert.equal(await polishText({ llm: lister, createUserMessage }, route('deepseek-flash'), '两件事第一预算第二文档'), '两件事：\n1. 预算\n2. 文档');
+	assert.equal(seen.options.temperature, 0);
+}
+
 console.log('polish: ok');
