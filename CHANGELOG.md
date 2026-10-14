@@ -7,9 +7,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-14
+
 ### Added
 
-- **AI polish** (off by default). After transcription, the text is cleaned by a model the user
+- **AI polish (experimental)** (off by default; quality still being tuned). After transcription, the text is cleaned by a model the user
   already configured in DSH: fillers removed, self-corrections resolved, misheard words fixed,
   punctuation added, explicit spoken enumerations turned into numbered lists. Runs as a Host
   Remote (`polish.js`) on `@deepseek-ai/dsh-llm`, picks a light model and turns reasoning off.
@@ -454,7 +456,8 @@ First release — the hold-to-talk gesture and everything it needs to be safe to
 - Localised `zh` / `en`; light and dark themes; graceful degradation when a host contract is
   missing.
 
-[Unreleased]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.0.2...v2.1.0
 [2.0.2]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.0.1...v2.0.2

@@ -134,9 +134,9 @@ On one 21-second clip with sentence pauses, changing only the code version, prev
 
 Live mode requires a local speech provider and a plain-text draft without reference chips. Other environments keep release-to-transcribe. Editing the draft during recognition stops automatic replacement and keeps the final result in the chip for explicit insertion. Neither mode is a native token stream.
 
-## AI polish
+## AI polish (experimental)
 
-Off by default. When on, a finished transcript is cleaned by a model **you already set up in DSH** before it is inserted — no extra API key:
+Off by default; output quality is still being tuned. When on, a finished transcript is cleaned by a model **you already set up in DSH** before it is inserted — no extra API key:
 
 - Drops fillers and stutters (“um”, “uh”, 嗯, 那个, 就是), keeping particles that carry tone
 - Keeps only the final wording when you correct yourself (“no wait, I mean…”)
