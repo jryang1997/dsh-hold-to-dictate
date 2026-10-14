@@ -108,7 +108,7 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 	assert.deepEqual(await service.describe(), { provider: 'DeepSeek', model: 'DeepSeek-V4.1-Flash' });
 	assert.deepEqual(await service.polish('um hello'), { text: 'Hello.', model: 'DeepSeek-V4.1-Flash' });
 	// The gateway reads plain parameter names from the method source; keep them simple.
-	assert.match(Function.prototype.toString.call(Service.prototype.polish), /^async polish\(transcript, vocabulary, signal\)/);
+	assert.match(Function.prototype.toString.call(Service.prototype.polish), /^async polish\(transcript, vocabulary, context, signal\)/);
 	const empty = new Service({ llm: { ...llm, listProviders: () => [] } });
 	assert.equal(await empty.describe(), null);
 	await assert.rejects(empty.polish('hi'), /no-model/);
@@ -165,6 +165,27 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 	const service = new Service({ llm: fakeLlm(() => stream([{ type: 'text-delta', text: '用 Claude Code 打开。' }]), { seen }) });
 	assert.deepEqual(await service.polish('用克劳德叩打开', 'Claude Code', undefined), { text: '用 Claude Code 打开。', model: 'DeepSeek-V4.1-Flash' });
 	assert.match(seen.options.system, /# The user's vocabulary\n[\s\S]*- Claude Code/);
+}
+
+// Draft context: the tail before the cursor goes in its own block, never in the output.
+{
+	const { draftContext, MAX_CONTEXT_CHARS } = await import('../polish.js');
+	assert.equal(draftContext('  上文  '), '上文');
+	assert.equal(draftContext(undefined), '');
+	const long = `${'旧'.repeat(500)}\n${'新'.repeat(300)}`;
+	assert.equal(draftContext(long), '新'.repeat(300), 'cut at a line start when one is near');
+	assert.ok(draftContext('字'.repeat(900)).length <= MAX_CONTEXT_CHARS);
+	assert.equal(polishUserText('说的话'), '<transcript>\n说的话\n</transcript>');
+	assert.equal(polishUserText('说的话', '上文'), '<context>\n上文\n</context>\n<transcript>\n说的话\n</transcript>');
+	assert.match(POLISH_PROMPT, /# Context\n[\s\S]*never output anything from it/);
+	const seen = {};
+	const Service = createPolishService({
+		TypertRemoteService: class { constructor(ctx) { this.ctx = ctx; } },
+		Remote: () => {},
+	}, { createUserMessage: (args) => { seen.message = args; return createUserMessage(args); } });
+	const service = new Service({ llm: fakeLlm(() => stream([{ type: 'text-delta', text: '接口已经改好了。' }])) });
+	await service.polish('那个接口已经改好了', '', '关于 DSH 的插件：', undefined);
+	assert.match(seen.message.content[0].text, /^<context>\n关于 DSH 的插件：\n<\/context>\n<transcript>/);
 }
 
 console.log('polish: ok');
