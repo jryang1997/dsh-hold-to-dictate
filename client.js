@@ -239,6 +239,40 @@ window.__ModuleLoader__.load({
 		const CONFIG_SLOT = 'plugins.bundle.config';
 
 		/**
+		 * The Host's polish Remote (see polish.js), described by hand because this bundle
+		 * has no build step. The Client must ship a strict codec for every field it sends;
+		 * the Host validates again before the method runs.
+		 */
+		const POLISH_NAMESPACE = 'holdToDictate';
+		const STRING_CODEC = {
+			mode: 'strict',
+			typeSymbol: 'string',
+			create: () => ({
+				parse(value) {
+					if (typeof value !== 'string') throw new TypeError('expected a string');
+					return value;
+				},
+			}),
+		};
+		const polishEndpoint = (method, parameters, cancellable) => ({
+			id: `@jryang1997/dsh-hold-to-dictate#${POLISH_NAMESPACE}/${method}`,
+			service: 'holdToDictatePolish',
+			namespace: POLISH_NAMESPACE,
+			method,
+			invocation: { kind: 'direct' },
+			parameters,
+			...(cancellable ? { cancellation: { parameter: 'signal' } } : {}),
+			result: { mode: 'src-json' },
+		});
+		const POLISH_REMOTE = {
+			package: '@jryang1997/dsh-hold-to-dictate',
+			descriptors: [
+				polishEndpoint('polish', [{ name: 'transcript', wire: 'transcript', source: 'json', codec: STRING_CODEC }], true),
+				polishEndpoint('describe', [], false),
+			],
+		};
+
+		/**
 		 * The chords offered in settings. Matching is on `event.code`, which is the physical key,
 		 * so a layout that moves the letters around cannot silently break the shortcut.
 		 */
@@ -264,6 +298,7 @@ window.__ModuleLoader__.load({
 			hint: { fallback: true, kind: 'switch' },
 			chord: { fallback: 'Control+Shift+Space', oneOf: Object.keys(CHORDS), kind: 'choice' },
 			live: { fallback: false, kind: 'switch' },
+			polish: { fallback: false, kind: 'switch' },
 			language: { fallback: 'host', oneOf: Object.keys(LANGUAGE_LABELS), kind: 'choice' },
 		};
 
@@ -390,7 +425,22 @@ window.__ModuleLoader__.load({
 		//#endregion
 
 		/** Handles captured in `apply`, so a slot entry that receives no injected props still works. */
-		const runtime = { speech: null, limits: null };
+		const runtime = { speech: null, limits: null, polish: null };
+		/**
+		 * Ask the Host to polish one finished transcript. `null` means "use the original":
+		 * no model, a timeout, a cancelled take or an odd reply all land here, because a
+		 * cleanup is never worth losing what the user said.
+		 */
+		const polishTranscript = async (transcript, signal) => {
+			if (runtime.polish === null) return null;
+			try {
+				const result = await runtime.polish.polish(transcript, signal);
+				const text = result?.ok === true ? String(result.value?.text ?? '').trim() : '';
+				return text === '' ? null : text;
+			} catch (error) {
+				return null;
+			}
+		};
 		/** The provider entry the Host selected, or undefined before its limits arrive. */
 		const selectedProvider = () => runtime.limits?.providers?.find((entry) => entry.id === runtime.limits.selection?.providerId);
 		/** Recording cap: the smaller of the Host's limit and this plugin's ceiling. */
@@ -438,6 +488,10 @@ window.__ModuleLoader__.load({
 			chordOff: '关闭',
 			liveLabel: '边说边出字（实验）',
 			liveHint: '录音时滚动识别，文字可能修正；松开后整段定稿。仅对本地语音服务启用。',
+			polishLabel: 'AI 润色',
+			polishHint: '转写后用你在 DSH 里配好的模型整理一遍：去掉「嗯、那个」这类语气词，修正同音错字，补标点，口述的「第一、第二」整理成列表。会多等一两秒；失败时插入原文。',
+			polishing: '润色中',
+			polishFailed: '润色没成功，已插入原文',
 			languageLabel: '识别语言',
 			languageHint: '「跟随宿主」由 Harness 每次自己判断语种，固定成你实际说的语言可以省掉这一步；实测多数长度下更快，也可能持平。',
 			languageHost: '跟随宿主',
@@ -489,6 +543,10 @@ window.__ModuleLoader__.load({
 			chordOff: 'Off',
 			liveLabel: 'Live dictation (experimental)',
 			liveHint: 'Recognize while recording; words may be revised. Release to finalize the whole recording. Local speech providers only.',
+			polishLabel: 'AI polish',
+			polishHint: 'After transcription, clean the text with a model you already set up in DSH: drop fillers like “um”, fix misheard words, add punctuation, and turn a spoken “first, second” into a list. Adds a second or two; inserts the original if it fails.',
+			polishing: 'Polishing',
+			polishFailed: 'Polish failed — inserted the original',
 			languageLabel: 'Recognition language',
 			languageHint: '"Host decides" makes Harness detect the language on every request; naming what you actually speak skips that step. Measured faster at most lengths, and never slower.',
 			languageHost: 'Host decides',
@@ -1510,6 +1568,15 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					}, t(values.live ? 'switchOn' : 'switchOff')),
 				),
 				row(
+					'polish', t('polishLabel'), t('polishHint'),
+					h('button', {
+						type: 'button', className: 'dsh-htt-set-toggle',
+						'aria-pressed': values.polish ? 'true' : 'false',
+						'data-on': values.polish ? '' : undefined,
+						onClick: () => config.set('polish', !values.polish),
+					}, t(values.polish ? 'switchOn' : 'switchOff')),
+				),
+				row(
 					'chord',
 					t('chordLabel'),
 					t('chordHint'),
@@ -1620,7 +1687,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 		}
 
 		const IDLE = {
-			phase: 'idle', notice: '', tone: 'info', leaving: false, cancelled: false, pending: '',
+			phase: 'idle', notice: '', tone: 'info', leaving: false, cancelled: false, pending: '', polishing: false,
 			pendingLeaving: false, bubbleLeaving: false, arm: null, armLeaving: false, retryable: false, elapsed: 0,
 		};
 		/** Completion remains visible briefly, but never blocks another recording. */
@@ -1787,6 +1854,11 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				 * started during an exit simply retargets and the bubble comes back.
 				 */
 				const show = (patchValues) => {
+					// "Polishing" belongs to one phase only; any phase change that does not
+					// restate it ends it, so a failure or cancel can never leave the label stuck.
+					if (patchValues.phase !== undefined && patchValues.polishing === undefined) {
+						patchValues = { ...patchValues, polishing: false };
+					}
 					if (patchValues.phase !== undefined) {
 						// A phase change replaces the previous notice's timers.
 						clearNotice();
@@ -2310,15 +2382,29 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 							show({ phase: 'notice', notice: say('empty'), tone: 'info', cancelled: false });
 							return;
 						}
+						// Optional cleanup. It runs inside the same take: Esc or a new press aborts
+						// it like the transcription, and every failure falls back to the words.
+						let text = transcript;
+						let polishMissed = false;
+						if (config.get('polish') && runtime.polish !== null) {
+							state.busy = true;
+							show({ phase: 'transcribing', notice: '', cancelled: false, polishing: true });
+							const polished = await polishTranscript(transcript, abort.signal);
+							if (run !== state.run) return;
+							state.busy = false;
+							if (polished === null) polishMissed = true;
+							else text = polished;
+						}
 						const actions = latest.current.props.inputActions;
-						if (actions === undefined || (liveDraft ? liveDraft.write(transcript) : actions.insertText(transcript, span)) !== true) {
+						if (actions === undefined || (liveDraft ? liveDraft.write(text) : actions.insertText(text, span)) !== true) {
 							// Keep the text: the draft moved on, so the user decides when to insert it.
 							state.retry = null;
-							show({ phase: 'idle', notice: '', pending: transcript });
+							show({ phase: 'idle', notice: '', pending: text });
 							return;
 						}
 						state.retry = null;
-						show({ phase: 'complete', notice: '', cancelled: false });
+						if (polishMissed) show({ phase: 'notice', notice: say('polishFailed'), tone: 'info', cancelled: false });
+						else show({ phase: 'complete', notice: '', cancelled: false });
 					} catch (error) {
 						if (run !== state.run) return;
 						state.busy = false;
@@ -2713,7 +2799,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 									? cancelled
 										? `${translate(props, 'cancelReady')} · ${translate(props, 'cancelReadyHint')}`
 										: `${translate(props, 'release')} · ${translate(props, 'cancelHint')}`
-									: translate(props, completed ? 'complete' : 'transcribing'),
+									: translate(props, completed ? 'complete' : view.polishing ? 'polishing' : 'transcribing'),
 							},
 							h('span', { className: 'dsh-htt-material', 'aria-hidden': true }),
 							h('span', { className: 'dsh-htt-alarm', 'aria-hidden': true }),
@@ -2758,7 +2844,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 									),
 								),
 								labelRow([
-									{ key: 'transcribe', on: !recording && !completed, text: translate(props, 'transcribing') },
+									{ key: 'transcribe', on: !recording && !completed, text: translate(props, view.polishing ? 'polishing' : 'transcribing') },
 									{ key: 'complete', on: completed, text: translate(props, 'complete') },
 									{ key: 'release', on: recording && !cancelled, text: translate(props, 'release') },
 									{
@@ -2846,6 +2932,23 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					{ name: CONFIG_SLOT, key: PKG, locale: NS },
 					SettingsPage,
 				)));
+			});
+			// AI polish runs on the Host (index.js + polish.js). Mounting is harmless when the
+			// Host half is missing: a call then fails and the original words are inserted.
+			ctx.inject(['remote'], (scope) => {
+				void (async () => {
+					try {
+						await scope.remote.$mount(POLISH_REMOTE);
+					} catch (error) {
+						return;
+					}
+					scope.inject([`remote.${POLISH_NAMESPACE}`], (inner) => {
+						runtime.polish = inner.remote[POLISH_NAMESPACE];
+						inner.effect(() => () => {
+							runtime.polish = null;
+						});
+					});
+				})();
 			});
 			// `remote.speech` is mounted by the experimental voice-input plugin; if that
 			// bundle is off the namespace is absent and this callback never runs, so the
