@@ -18,6 +18,15 @@ Hold the mouse button in the [DeepSeek Harness](https://github.com/deepseek-ai/d
   <img src="docs/gesture-overview.svg" width="840" alt="Three steps: hold for about 0.3 seconds, speak, release and the text lands in your draft">
 </p>
 
+## What it does differently
+
+- **No recognizer of its own.** No dependencies at all: it reuses the local model and language list the official voice-input module already prepared, so there is no second model to download and nothing native to build.
+- **Mouse, touch and keyboard.** Hold the mouse for about 0.3 s; touch has its own 450 ms threshold so it does not fight word selection; or hold `Ctrl + Shift + Space`, with `Esc` to cancel.
+- **Your edits win.** If you edit the draft during recognition, the result waits in a chip at the lower right until you click it.
+- **A failure keeps the audio.** If the speech service is briefly unreachable, **Retry** sends the same recording again.
+- **Live dictation (experimental).** Long takes commit at sentence pauses and re-read only the new audio; releasing still finalizes from the whole recording.
+- **Never sends.** Text only lands in the draft.
+
 ## Before installing: two things have to be in place
 
 This plugin has no recognizer of its own. It uses the official voice-input module's service.
