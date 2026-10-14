@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Polish model** picker in settings (shown once polish is on): Auto, which names the model it
+  would pick, or any configured text model. A chosen model that is later removed falls back to Auto.
 - **Draft context** for AI polish: up to 400 characters of what is already in the draft before the
   dictation point go to the model in a separate block, so names, terms and tone match. The model is
   told never to repeat or edit it, and a reply that copies it is caught by the stray guard.

@@ -126,6 +126,24 @@ export function pickRoute(routes) {
 }
 
 /** Every provider's models, skipping a provider whose listing fails. */
+/** A stable id for one provider + model pair, as stored in the Client's settings. */
+export const routeKey = (route) => `${route.provider}/${route.model}`;
+
+/** At most this many models are offered in settings. */
+export const MAX_LISTED_ROUTES = 50;
+
+/** Text-capable routes, the only ones a cleanup can run on. */
+const textRoutes = (routes) => routes.filter((route) => route.modalities === undefined || route.modalities.includes('text'));
+
+/** The user's chosen route when it is still configured, else the automatic pick. */
+export function chooseRoute(routes, preferred = '') {
+	if (typeof preferred === 'string' && preferred !== '') {
+		const chosen = textRoutes(routes).find((route) => routeKey(route) === preferred);
+		if (chosen !== undefined) return chosen;
+	}
+	return pickRoute(routes);
+}
+
 export async function listRoutes(llm) {
 	const routes = [];
 	for (const provider of llm.listProviders()) {
@@ -372,22 +390,33 @@ export function createPolishService(protocol, llmModule) {
 			super(ctx, POLISH_SERVICE, { namespace: POLISH_NAMESPACE });
 		}
 
-		async route() {
-			return pickRoute(await listRoutes(this.ctx.llm));
+		async route(preferred = '') {
+			return chooseRoute(await listRoutes(this.ctx.llm), preferred);
 		}
 
-		/** Which model a cleanup would use right now, or `null` when none is configured. */
+		/**
+		 * Which model a cleanup would pick on its own, and every text model the user could
+		 * choose instead. `null` when no model is configured at all.
+		 */
 		async describe() {
-			const route = await this.route();
-			return route === null ? null : { provider: route.providerName, model: route.modelName };
+			const routes = await listRoutes(this.ctx.llm);
+			const auto = pickRoute(routes);
+			if (auto === null) return null;
+			return {
+				provider: auto.providerName,
+				model: auto.modelName,
+				key: routeKey(auto),
+				routes: textRoutes(routes).slice(0, MAX_LISTED_ROUTES)
+					.map((route) => ({ key: routeKey(route), label: `${route.providerName} · ${route.modelName}` })),
+			};
 		}
 
 		/**
 		 * Clean one finished transcript; returns `{ text, model }`. `vocabulary` is the
 		 * user's comma- or line-separated list of preferred spellings (may be empty).
 		 */
-		async polish(transcript, vocabulary, context, signal) {
-			const route = await this.route();
+		async polish(transcript, vocabulary, context, model, signal) {
+			const route = await this.route(model);
 			if (route === null) throw new Error('polish/no-model');
 			const text = await polishText(
 				{ llm: this.ctx.llm, createUserMessage: llmModule.createUserMessage },
