@@ -52,4 +52,11 @@ for (const leaked of ['tests/', '.github/', '.git/']) {
 	assert.ok(![...packed].some((path) => path.startsWith(leaked)), `${leaked} must stay out of the published tarball`);
 }
 
+{
+	const { readFileSync: readVersionFile } = await import('node:fs');
+	const pkgVersion = JSON.parse(readVersionFile(new URL('../package.json', import.meta.url), 'utf8')).version;
+	const clientVersion = /const VERSION = '([^']+)'/.exec(readVersionFile(new URL('../client.js', import.meta.url), 'utf8'))?.[1];
+	assert.equal(clientVersion, pkgVersion, 'client.js VERSION must match package.json');
+}
+
 console.log(`package: ok (${packed.size} files, ${referenced.length} README references all present)`);
