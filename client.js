@@ -271,6 +271,7 @@ window.__ModuleLoader__.load({
 					{ name: 'transcript', wire: 'transcript', source: 'json', codec: STRING_CODEC },
 					{ name: 'vocabulary', wire: 'vocabulary', source: 'json', codec: STRING_CODEC },
 					{ name: 'context', wire: 'context', source: 'json', codec: STRING_CODEC },
+					{ name: 'model', wire: 'model', source: 'json', codec: STRING_CODEC },
 				], true),
 				polishEndpoint('describe', [], false),
 			],
@@ -304,6 +305,7 @@ window.__ModuleLoader__.load({
 			live: { fallback: false, kind: 'switch' },
 			polish: { fallback: false, kind: 'switch' },
 			vocabulary: { fallback: '', kind: 'text', max: 600 },
+			polishModel: { fallback: '', kind: 'text', max: 200 },
 			language: { fallback: 'host', oneOf: Object.keys(LANGUAGE_LABELS), kind: 'choice' },
 		};
 
@@ -438,9 +440,10 @@ window.__ModuleLoader__.load({
 		 * cleanup is never worth losing what the user said.
 		 */
 		const polishTranscript = async (transcript, vocabulary, context, signal) => {
+			const model = config.get('polishModel');
 			if (runtime.polish === null) return null;
 			try {
-				const result = await runtime.polish.polish(transcript, vocabulary, context, signal);
+				const result = await runtime.polish.polish(transcript, vocabulary, context, model, signal);
 				const text = result?.ok === true ? String(result.value?.text ?? '').trim() : '';
 				return text === '' ? null : text;
 			} catch (error) {
@@ -500,6 +503,10 @@ window.__ModuleLoader__.load({
 			vocabularyLabel: '常用词',
 			vocabularyHint: '你常说的术语、项目名、人名，用逗号或换行分隔。润色听到发音相近的词时，会按这里的写法纠正。',
 			vocabularyPlaceholder: '例如：Claude Code, DSH, 根目录, Token',
+			polishModelLabel: '润色模型',
+			polishModelHint: '默认自动挑一个又快又便宜的文本模型。选中的模型被移除后，会自动回到自动选择。',
+			polishModelAuto: '自动',
+			polishModelMissing: '已不可用',
 			polishFailed: '润色没成功，已插入原文',
 			languageLabel: '识别语言',
 			languageHint: '「跟随宿主」由 Harness 每次自己判断语种，固定成你实际说的语言可以省掉这一步；实测多数长度下更快，也可能持平。',
@@ -558,6 +565,10 @@ window.__ModuleLoader__.load({
 			vocabularyLabel: 'Vocabulary',
 			vocabularyHint: 'Terms, project names and people you often say, separated by commas or new lines. When polish hears something that sounds like one, it uses your spelling.',
 			vocabularyPlaceholder: 'e.g. Claude Code, DSH, Kubernetes, Token',
+			polishModelLabel: 'Polish model',
+			polishModelHint: 'Auto picks a fast, inexpensive text model. If the chosen model is removed, polish goes back to auto.',
+			polishModelAuto: 'Auto',
+			polishModelMissing: 'unavailable',
 			polishFailed: 'Polish failed — inserted the original',
 			languageLabel: 'Recognition language',
 			languageHint: '"Host decides" makes Harness detect the language on every request; naming what you actually speak skips that step. Measured faster at most lengths, and never slower.',
@@ -1444,6 +1455,11 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
   border-color:var(--dsw-alias-border-l2); font-weight:500;
 }
 .dsh-htt-set-reset{height:28px; line-height:26px}
+.dsh-htt-set-select{
+  box-sizing:border-box; max-width:240px; height:28px; padding:0 6px;
+  border:1px solid var(--dsw-alias-border-l2); border-radius:var(--dsw-radius-sm);
+  background:var(--dsw-alias-bg-layer-1); color:inherit; font:inherit; font-size:12px;
+}
 .dsh-htt-set-row-stack{flex-direction:column; align-items:stretch; gap:8px}
 .dsh-htt-set-words{
   box-sizing:border-box; width:100%; min-height:60px; padding:6px 8px; resize:vertical;
@@ -1451,7 +1467,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
   background:var(--dsw-alias-bg-layer-1); color:inherit; font:inherit; font-size:13px; line-height:19px;
 }
 .dsh-htt-set-words::placeholder{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary))}
-.dsh-htt-set-number:focus-visible, .dsh-htt-set-words:focus-visible, .dsh-htt-set-segment:focus-visible,
+.dsh-htt-set-number:focus-visible, .dsh-htt-set-words:focus-visible, .dsh-htt-set-select:focus-visible, .dsh-htt-set-segment:focus-visible,
 .dsh-htt-set-toggle:focus-visible, .dsh-htt-set-reset:focus-visible{
   outline-style:solid; outline-width:2px; outline-offset:2px;
   outline-color:var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));
@@ -1463,6 +1479,26 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 			const [values, setValues] = React.useState(() => config.all());
 			React.useEffect(() => config.subscribe(() => setValues(config.all())), []);
 			const t = (key) => translate(props, key);
+			// The models polish can run on come from the Host; ask once polish is on.
+			const [models, setModels] = React.useState(null);
+			React.useEffect(() => {
+				if (!values.polish || runtime.polish === null || typeof runtime.polish.describe !== 'function') return undefined;
+				let live = true;
+				Promise.resolve(runtime.polish.describe()).then((result) => {
+					if (live && result?.ok === true && result.value && Array.isArray(result.value.routes)) setModels(result.value);
+				}, () => {});
+				return () => { live = false; };
+			}, [values.polish]);
+			const modelOptions = () => {
+				const options = [{ key: '', label: models?.model ? `${t('polishModelAuto')} · ${models.model}` : t('polishModelAuto') }];
+				for (const route of models?.routes ?? []) {
+					if (typeof route?.key === 'string' && route.key !== '') options.push({ key: route.key, label: String(route.label ?? route.key) });
+				}
+				if (values.polishModel !== '' && !options.some((option) => option.key === values.polishModel)) {
+					options.push({ key: values.polishModel, label: `${values.polishModel} (${t('polishModelMissing')})` });
+				}
+				return options;
+			};
 
 			const row = (key, label, hint, control) =>
 				h(
@@ -1595,6 +1631,21 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						onClick: () => config.set('polish', !values.polish),
 					}, t(values.polish ? 'switchOn' : 'switchOff')),
 				),
+				values.polish ? row(
+					'polishModel',
+					t('polishModelLabel'),
+					t('polishModelHint'),
+					h(
+						'select',
+						{
+							className: 'dsh-htt-set-select',
+							value: values.polishModel,
+							'aria-label': t('polishModelLabel'),
+							onChange: (event) => config.set('polishModel', event.target.value),
+						},
+						modelOptions().map((option) => h('option', { key: option.key || 'auto', value: option.key }, option.label)),
+					),
+				) : null,
 				values.polish ? h(
 					'div',
 					{ className: 'dsh-htt-set-row dsh-htt-set-row-stack', 'data-key': 'vocabulary' },

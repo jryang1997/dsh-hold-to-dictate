@@ -105,10 +105,13 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 	const service = new Service({ llm });
 	assert.equal(service.key, POLISH_SERVICE);
 	assert.deepEqual(service.options, { namespace: POLISH_NAMESPACE });
-	assert.deepEqual(await service.describe(), { provider: 'DeepSeek', model: 'DeepSeek-V4.1-Flash' });
+	const about = await service.describe();
+	assert.equal(about.provider, 'DeepSeek');
+	assert.equal(about.model, 'DeepSeek-V4.1-Flash');
+	assert.ok(about.routes.some((route) => route.key === about.key), 'the automatic pick is one of the listed routes');
 	assert.deepEqual(await service.polish('um hello'), { text: 'Hello.', model: 'DeepSeek-V4.1-Flash' });
 	// The gateway reads plain parameter names from the method source; keep them simple.
-	assert.match(Function.prototype.toString.call(Service.prototype.polish), /^async polish\(transcript, vocabulary, context, signal\)/);
+	assert.match(Function.prototype.toString.call(Service.prototype.polish), /^async polish\(transcript, vocabulary, context, model, signal\)/);
 	const empty = new Service({ llm: { ...llm, listProviders: () => [] } });
 	assert.equal(await empty.describe(), null);
 	await assert.rejects(empty.polish('hi'), /no-model/);
@@ -163,7 +166,7 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 		Remote: () => {},
 	}, { createUserMessage });
 	const service = new Service({ llm: fakeLlm(() => stream([{ type: 'text-delta', text: '用 Claude Code 打开。' }]), { seen }) });
-	assert.deepEqual(await service.polish('用克劳德叩打开', 'Claude Code', undefined), { text: '用 Claude Code 打开。', model: 'DeepSeek-V4.1-Flash' });
+	assert.deepEqual(await service.polish('用克劳德叩打开', 'Claude Code', '', '', undefined), { text: '用 Claude Code 打开。', model: 'DeepSeek-V4.1-Flash' });
 	assert.match(seen.options.system, /# The user's vocabulary\n[\s\S]*- Claude Code/);
 }
 
@@ -184,8 +187,33 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 		Remote: () => {},
 	}, { createUserMessage: (args) => { seen.message = args; return createUserMessage(args); } });
 	const service = new Service({ llm: fakeLlm(() => stream([{ type: 'text-delta', text: '接口已经改好了。' }])) });
-	await service.polish('那个接口已经改好了', '', '关于 DSH 的插件：', undefined);
+	await service.polish('那个接口已经改好了', '', '关于 DSH 的插件：', '', undefined);
 	assert.match(seen.message.content[0].text, /^<context>\n关于 DSH 的插件：\n<\/context>\n<transcript>/);
+}
+
+// Model choice: a configured pick wins, a stale one falls back to auto.
+{
+	const { chooseRoute, routeKey } = await import('../polish.js');
+	const routes = [
+		{ provider: 'ds', providerName: 'DeepSeek', model: 'deepseek-v4-pro', modelName: 'DeepSeek-V4-Pro' },
+		{ provider: 'ds', providerName: 'DeepSeek', model: 'deepseek-flash', modelName: 'DeepSeek-V4.1-Flash' },
+		{ provider: 'img', providerName: 'Img', model: 'vision', modelName: 'Vision', modalities: ['image'] },
+	];
+	assert.equal(routeKey(routes[0]), 'ds/deepseek-v4-pro');
+	assert.equal(chooseRoute(routes, '').model, 'deepseek-flash');
+	assert.equal(chooseRoute(routes, 'ds/deepseek-v4-pro').model, 'deepseek-v4-pro');
+	assert.equal(chooseRoute(routes, 'gone/model').model, 'deepseek-flash');
+	assert.equal(chooseRoute(routes, 'img/vision').model, 'deepseek-flash', 'a non-text model is never used');
+	assert.equal(chooseRoute([], 'ds/x'), null);
+	// describe lists text models only, with the automatic pick named.
+	const Service = createPolishService({
+		TypertRemoteService: class { constructor(ctx) { this.ctx = ctx; } },
+		Remote: () => {},
+	}, { createUserMessage });
+	const service = new Service({ llm: fakeLlm(() => stream([{ type: 'text-delta', text: '好。' }])) });
+	const described = await service.describe();
+	assert.equal(described.key.length > 0, true);
+	assert.ok(Array.isArray(described.routes) && described.routes.every((route) => typeof route.key === 'string' && typeof route.label === 'string'));
 }
 
 console.log('polish: ok');

@@ -99,6 +99,7 @@ dsh plugin --profile <profile> add github:jryang1997/dsh-hold-to-dictate
 | 键盘快捷键 | `Ctrl + Shift + Space` | 关闭 / `Ctrl + Shift + Space` / `Ctrl + Shift + D` / `Ctrl + Shift + M` / `Ctrl + Alt + Space` |
 | 悬停提示 | 开 | 开 / 关 |
 | AI 润色（实验） | 关 | 开 / 关。见下文 |
+| 润色模型 | 自动 | 开启润色后出现。自动（挑又快又便宜的文本模型）或任一已配置的文本模型 |
 | 常用词 | 空 | 开启润色后出现。逗号或换行分隔，最多 60 个 |
 | 动效 | 完整 | 完整 / 精简（去掉位移与缩放，只保留淡入淡出） |
 | 边说边出字（实验） | 关 | 开 / 关，见下节 |
