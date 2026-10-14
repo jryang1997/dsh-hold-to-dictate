@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-14
+
 ### Added
 
 - **About** row in settings: version, changelog and issue links, and a "Check for updates" button
@@ -479,7 +481,8 @@ First release — the hold-to-talk gesture and everything it needs to be safe to
 - Localised `zh` / `en`; light and dark themes; graceful degradation when a host contract is
   missing.
 
-[Unreleased]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.0.2...v2.1.0
