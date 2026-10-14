@@ -9,6 +9,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The live-preview plan is its own module.** Which slice of the take a preview reads, how a
+  transcript folds into the draft, the commit-at-pause rule, and the refresh cadence (round-trip
+  pacing, failure backoff, starvation) now live in a pure `createLivePlan()`; the preview loop
+  keeps only the timer, the snapshot and the Host call. Seven `live*` fields leave the gesture
+  state, and `tests/plan.test.mjs` pins the rules as plain call sequences. No behaviour change.
+
 - **Audit pass on the client, READMEs, CI and tests.** Shared helpers cover the selected
   provider and recording caps; duplicate media-query surfaces and unused `settingsTitle` /
   notice-error CSS are gone; CI runs `npm run check` like CONTRIBUTING.md. Both READMEs drop

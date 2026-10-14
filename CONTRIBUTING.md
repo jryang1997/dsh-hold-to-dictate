@@ -37,6 +37,10 @@ silently:
 
 If you add a surface, add its exit here too.
 
+`tests/plan.test.mjs` checks the live-preview plan on its own — the slice each preview reads,
+how transcripts fold into the draft, commit-at-pause, and the refresh cadence — as plain call
+sequences with no audio, React or timers. Change a cadence rule here first.
+
 `tests/live.test.mjs` exercises the registered slot through the audio and speech-service
 boundaries: provisional and final draft updates, guarded rollback, manual edits, slow
 responses, cancellation, retry and one-shot fallback. It also pins the refresh cadence — a
