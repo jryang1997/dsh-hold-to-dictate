@@ -11,11 +11,11 @@ import { readFileSync } from 'node:fs';
 
 // Expose the plan only to this harness, without expanding the plugin API.
 const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-	.replace('return { inject, apply };', 'return { inject, apply, createLivePlan };');
+	.replace('return { inject, apply };', 'return { inject, apply, createLivePlan, createTake };');
 let loaded = null;
 // Node 20 (CI) has no global navigator; pass one in, as render and live do.
 new Function('window', 'navigator', source)({ __ModuleLoader__: { load(module) { loaded = module; } } }, { language: 'en-US' });
-const { createLivePlan } = loaded.factory(() => ({}));
+const { createLivePlan, createTake } = loaded.factory(() => ({}));
 const none = () => { throw new Error('an unsegmented take never asks for a pause'); };
 
 // A short take is read whole every time, and its transcript is the text.
@@ -85,6 +85,25 @@ const none = () => { throw new Error('an unsegmented take never asks for a pause
 	const plan = createLivePlan();
 	for (let i = 0; i < 5; i++) { plan.read(plan.next(none), 'x', i); plan.settle('ok', 700); }
 	assert.deepEqual([plan.next(none).from, plan.next(none).to], [0, null], 'exactly 700 ms is not yet expensive');
+}
+
+// A take owns everything one recording touches; a new one shares nothing with the last.
+{
+	const draft = {}, capture = {};
+	const first = createTake(draft, capture);
+	assert.equal(first.liveDraft, draft);
+	assert.equal(first.capture, capture);
+	assert.equal(first.preview, null);
+	assert.equal(first.elapsed, 0);
+	assert.equal(first.waveAt, -Infinity);
+	assert.deepEqual(first.lift, { position: 0, velocity: 0 });
+	first.lift.position = -8;
+	first.live.settle('failed', 0);
+	const second = createTake(null, null);
+	assert.notEqual(second.lift, first.lift);
+	assert.equal(second.lift.position, 0);
+	assert.notEqual(second.live, first.live);
+	assert.equal(second.live.wait, 120);
 }
 
 console.log('plan: ok');
