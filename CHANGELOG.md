@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **About** row in settings: version, changelog and issue links, and a "Check for updates" button
+  that asks GitHub for the latest release only when clicked.
 - **Longest recording** setting (15–600 s, default 110 s). A take stops and is transcribed at
   that length, and never goes past the limit the speech service reports.
 - **Polish model** picker in settings (shown once polish is on): Auto, which names the model it

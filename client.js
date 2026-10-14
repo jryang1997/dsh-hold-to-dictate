@@ -52,6 +52,10 @@ window.__ModuleLoader__.load({
 		const MIN_SECONDS = 0.35;
 		/** Kept below the Host default (120 s) so the Host never rejects on duration. */
 		const MAX_SECONDS = 110;
+		/** This build's version; tests/package.test.mjs keeps it equal to package.json. */
+		const VERSION = '2.3.0';
+		const REPO_URL = 'https://github.com/jryang1997/dsh-hold-to-dictate';
+		const LATEST_RELEASE_API = 'https://api.github.com/repos/jryang1997/dsh-hold-to-dictate/releases/latest';
 		/** Kept below the Host default (4 MiB) so the Host never rejects on size. */
 		const MAX_BYTES = 4 * 1024 * 1024 - 4096;
 		/**
@@ -453,6 +457,37 @@ window.__ModuleLoader__.load({
 		};
 		/** The provider entry the Host selected, or undefined before its limits arrive. */
 		const selectedProvider = () => runtime.limits?.providers?.find((entry) => entry.id === runtime.limits.selection?.providerId);
+		/** -1, 0 or 1 for two `x.y.z` versions; a leading `v` and any suffix are ignored. */
+		const compareVersions = (a, b) => {
+			const parts = (value) => String(value ?? '').replace(/^v/i, '').split(/[.+-]/).slice(0, 3).map((n) => Number.parseInt(n, 10) || 0);
+			const [x, y] = [parts(a), parts(b)];
+			for (let i = 0; i < 3; i += 1) {
+				if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0) ? 1 : -1;
+			}
+			return 0;
+		};
+		/**
+		 * Ask GitHub for the newest release. Only on a click, never in the background, and a
+		 * blocked network just says so.
+		 */
+		const checkLatest = async () => {
+			const timeout = new AbortController();
+			const timer = window.setTimeout(() => timeout.abort(), 8000);
+			try {
+				const response = await window.fetch(LATEST_RELEASE_API, { headers: { Accept: 'application/vnd.github+json' }, signal: timeout.signal });
+				if (!response.ok) return { state: 'failed' };
+				const body = await response.json();
+				const tag = String(body?.tag_name ?? '');
+				if (tag === '') return { state: 'failed' };
+				return compareVersions(tag, VERSION) > 0
+					? { state: 'newer', tag, url: String(body?.html_url ?? `${REPO_URL}/releases`) }
+					: { state: 'latest' };
+			} catch (error) {
+				return { state: 'failed' };
+			} finally {
+				window.clearTimeout(timer);
+			}
+		};
 		/**
 		 * Recording cap: the user's setting, never above the Host's own limit. Until the Host
 		 * reports one, the plugin's safe default ceiling applies.
@@ -523,7 +558,16 @@ window.__ModuleLoader__.load({
 			languageJa: '日文',
 			languageKo: '韩文',
 			settingsReset: '恢复默认',
-			settingsLocal: '单位：毫秒',
+			settingsLocal: '按住时长以毫秒为单位，设置只保存在本机。',
+			aboutLabel: '关于',
+			aboutVersion: '版本',
+			aboutChangelog: '更新日志',
+			aboutIssue: '反馈问题',
+			aboutCheck: '检查更新',
+			aboutChecking: '检查中…',
+			aboutLatest: '已是最新版本',
+			aboutNewer: '有新版本',
+			aboutFailed: '暂时无法检查，可打开更新日志查看',
 		};
 		const en = {
 			hint: 'Hold to dictate · swipe up to cancel',
@@ -587,7 +631,16 @@ window.__ModuleLoader__.load({
 			languageJa: 'Japanese',
 			languageKo: 'Korean',
 			settingsReset: 'Restore defaults',
-			settingsLocal: 'milliseconds',
+			settingsLocal: 'Hold durations are in milliseconds. Settings stay on this device.',
+			aboutLabel: 'About',
+			aboutVersion: 'Version',
+			aboutChangelog: 'Changelog',
+			aboutIssue: 'Report an issue',
+			aboutCheck: 'Check for updates',
+			aboutChecking: 'Checking…',
+			aboutLatest: 'You are up to date',
+			aboutNewer: 'New version',
+			aboutFailed: 'Could not check right now; see the changelog',
 		};
 
 		/**
@@ -1449,20 +1502,23 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
   border:1px solid var(--dsw-alias-border-l1); border-radius:var(--dsw-radius-sm);
   background:var(--dsw-alias-bg-layer-1);
 }
-.dsh-htt-set-segment, .dsh-htt-set-toggle, .dsh-htt-set-reset{
+.dsh-htt-set-segment, .dsh-htt-set-toggle, .dsh-htt-set-reset, .dsh-htt-set-check{
   box-sizing:border-box; height:24px; padding:0 10px;
   border:1px solid transparent; border-radius:6px; background:transparent;
   color:var(--dsw-alias-label-secondary); font:inherit; font-size:12px; line-height:22px; cursor:pointer;
   transition:background-color var(--dsh-htt-t-press,140ms) linear, color var(--dsh-htt-t-press,140ms) linear;
 }
-.dsh-htt-set-segment:hover, .dsh-htt-set-toggle:hover, .dsh-htt-set-reset:hover{
+.dsh-htt-set-segment:hover, .dsh-htt-set-toggle:hover, .dsh-htt-set-reset:hover, .dsh-htt-set-check:hover:not([disabled]){
   background:var(--dsw-alias-interactive-bg-hover); color:var(--dsw-alias-label-primary);
 }
 .dsh-htt-set-segment[data-on], .dsh-htt-set-toggle[data-on]{
   background:var(--dsw-alias-bg-layer-2); color:var(--dsw-alias-label-primary);
   border-color:var(--dsw-alias-border-l2); font-weight:500;
 }
-.dsh-htt-set-reset{height:28px; line-height:26px}
+.dsh-htt-set-reset, .dsh-htt-set-check{height:28px; line-height:26px}
+.dsh-htt-set-about a, .dsh-htt-set-hint a{color:inherit; text-decoration:underline; text-underline-offset:2px}
+.dsh-htt-set-hint a:hover{color:var(--dsw-alias-label-primary)}
+.dsh-htt-set-check[disabled]{opacity:.6; cursor:default}
 .dsh-htt-set-select{
   box-sizing:border-box; max-width:240px; height:28px; padding:0 6px;
   border:1px solid var(--dsw-alias-border-l2); border-radius:var(--dsw-radius-sm);
@@ -1476,7 +1532,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 }
 .dsh-htt-set-words::placeholder{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary))}
 .dsh-htt-set-number:focus-visible, .dsh-htt-set-words:focus-visible, .dsh-htt-set-select:focus-visible, .dsh-htt-set-segment:focus-visible,
-.dsh-htt-set-toggle:focus-visible, .dsh-htt-set-reset:focus-visible{
+.dsh-htt-set-toggle:focus-visible, .dsh-htt-set-reset:focus-visible, .dsh-htt-set-check:focus-visible{
   outline-style:solid; outline-width:2px; outline-offset:2px;
   outline-color:var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));
 }
@@ -1489,6 +1545,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 			const t = (key) => translate(props, key);
 			// The models polish can run on come from the Host; ask once polish is on.
 			const [models, setModels] = React.useState(null);
+			const [update, setUpdate] = React.useState({ state: 'idle' });
 			React.useEffect(() => {
 				if (!values.polish || runtime.polish === null || typeof runtime.polish.describe !== 'function') return undefined;
 				let live = true;
@@ -1696,6 +1753,47 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 								},
 								option === 'off' ? t('chordOff') : CHORDS[option].label,
 							),
+						),
+					),
+				),
+				h(
+					'div',
+					{ className: 'dsh-htt-set-row', 'data-setting': 'about' },
+					h(
+						'div',
+						{ className: 'dsh-htt-set-text' },
+						h('span', { className: 'dsh-htt-set-label' }, t('aboutLabel')),
+						h(
+							'span',
+							{ className: 'dsh-htt-set-hint dsh-htt-set-about' },
+							`${t('aboutVersion')} ${VERSION} · `,
+							h('a', { href: `${REPO_URL}/blob/main/CHANGELOG.md`, target: '_blank', rel: 'noreferrer' }, t('aboutChangelog')),
+							' · ',
+							h('a', { href: `${REPO_URL}/issues`, target: '_blank', rel: 'noreferrer' }, t('aboutIssue')),
+						),
+						update.state === 'idle' || update.state === 'checking' ? null : h(
+							'span',
+							{ className: 'dsh-htt-set-hint', role: 'status', 'data-update': update.state },
+							update.state === 'newer'
+								? h('a', { href: update.url, target: '_blank', rel: 'noreferrer' }, `${t('aboutNewer')} ${update.tag}`)
+								: t(update.state === 'latest' ? 'aboutLatest' : 'aboutFailed'),
+						),
+					),
+					h(
+						'div',
+						{ className: 'dsh-htt-set-control' },
+						h(
+							'button',
+							{
+								type: 'button',
+								className: 'dsh-htt-set-check',
+								disabled: update.state === 'checking',
+								onClick: () => {
+									setUpdate({ state: 'checking' });
+									void checkLatest().then(setUpdate);
+								},
+							},
+							t(update.state === 'checking' ? 'aboutChecking' : 'aboutCheck'),
 						),
 					),
 				),
