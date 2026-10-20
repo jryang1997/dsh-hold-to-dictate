@@ -16,3 +16,5 @@ The words this repo uses for the dictation gesture. Code, tests, issues and PRs 
 | **Retained transcript** | Text that could not be inserted (the draft moved on, or the composer was busy). The lower-right chip keeps it for the user to place. |
 | **Host** | The DSH Harness and the internal APIs it exposes: `slots`, `inputActions`, `useInput` and `remote.speech`. |
 | **Provider** | The speech recognizer the Host has selected. `catalog()` reports which providers exist, whether they are ready, and their limits. |
+| **Reasoning declaration** | The selected polish route's Host-reported efforts. Off support is `supported` only for explicit `off`, `unsupported` for valid efforts without `off`, and `unknown` when metadata is absent or unavailable. This does not verify vendor behavior. |
+| **Require reasoning off** | An opt-in polish requirement. Every candidate must declare `off` and retain it in the prepared call, including retries. Failure keeps the original transcript. With the switch off, automatic polish still selects the lowest recognized declared effort. |

@@ -14,7 +14,7 @@ export const POLISH_NAMESPACE = 'holdToDictate';
 export const MAX_TRANSCRIPT_CHARS = 4000;
 /** The model may add list markers and punctuation, never twice the text. */
 export const MAX_OUTPUT_FACTOR = 2;
-/** The whole cleanup's budget, retry included: the user never waits longer than this. */
+/** The cleanup attempts' budget, retry included; model discovery happens before it. */
 export const POLISH_TIMEOUT_MS = 15000;
 /** A retry only starts when at least this much of the budget is left. */
 export const MIN_RETRY_MS = 3000;
@@ -124,9 +124,8 @@ export function pickRoute(routes) {
 }
 
 /**
- * DeepSeek's own providers (API key and account sign-in). A cleanup prefers them over
- * third-party gateways: they expose a "reasoning off" setting, so a two-second cleanup
- * does not turn into a long think, and they are what most users actually pay for.
+ * DeepSeek's own providers (API key and account sign-in). A cleanup prefers these
+ * routes, then ranks models within each channel. Reasoning support is checked separately.
  */
 export const OFFICIAL_PROVIDERS = ['deepseek-official', 'deepseek-account'];
 export const isOfficial = (route) => OFFICIAL_PROVIDERS.includes(route?.provider);
@@ -345,25 +344,60 @@ export function tidyOutput(text) {
 	return out;
 }
 
-/** The route's lowest reasoning setting, so a cleanup does not sit thinking. */
-async function callConfig(llm, route, signal) {
-	const base = { provider: route.provider, model: route.model };
-	try {
-		const info = await llm.resolveModelInfo(route.provider, route.model, signal);
-		const efforts = info?.reasoning?.efforts ?? [];
-		const ids = efforts.map((effort) => String(effort.id));
-		const lowest = ['off', 'none', 'minimal', 'low'].find((id) => ids.includes(id));
-		return lowest === undefined ? base : { ...base, reasoningEffort: lowest };
-	} catch {
-		return base;
+/** Declared support only: `none` and `minimal` are not proof that thinking can stop. */
+export function normalizeReasoning(key, info) {
+	const declared = info?.reasoning?.efforts;
+	const efforts = [];
+	if (Array.isArray(declared)) {
+		for (const effort of declared) {
+			if (typeof effort?.id !== 'string' || effort.id.trim() === '' || efforts.some((item) => item.id === effort.id)) continue;
+			efforts.push({ id: effort.id, name: typeof effort.name === 'string' && effort.name.trim() !== '' ? effort.name : effort.id });
+		}
 	}
+	const ids = efforts.map((effort) => effort.id);
+	const offEffort = ids.includes('off') ? 'off' : null;
+	return {
+		key, state: offEffort ? 'supported' : efforts.length > 0 ? 'unsupported' : 'unknown', efforts,
+		autoEffort: ['off', 'none', 'minimal', 'low'].find((id) => ids.includes(id)) ?? null,
+		offEffort,
+	};
+}
+
+/** Stop waiting even when a provider ignores its AbortSignal. */
+function abortable(work, signal) {
+	signal.throwIfAborted();
+	return new Promise((resolve, reject) => {
+		const abort = () => reject(signal.reason);
+		signal.addEventListener('abort', abort, { once: true });
+		Promise.resolve().then(() => { signal.throwIfAborted(); return work(); }).then(resolve, reject)
+			.finally(() => signal.removeEventListener('abort', abort));
+	});
+}
+
+async function routeReasoning(llm, route, signal) {
+	try {
+		const info = await abortable(() => llm.resolveModelInfo(route.provider, route.model, signal), signal);
+		return normalizeReasoning(routeKey(route), info);
+	} catch (error) {
+		signal.throwIfAborted();
+		return normalizeReasoning(routeKey(route));
+	}
+}
+
+/** One policy for automatic effort and strict off, re-read for every actual candidate. */
+async function callConfig(llm, route, signal, requireOff) {
+	const base = { provider: route.provider, model: route.model };
+	const capability = await routeReasoning(llm, route, signal);
+	if (requireOff && capability.offEffort === null) throw new Error('polish/reasoning-unavailable');
+	const effort = requireOff ? capability.offEffort : capability.autoEffort;
+	return effort === null ? base : { ...base, reasoningEffort: effort };
 }
 
 /**
  * Run one cleanup. Returns the polished text, or throws; the caller keeps the original.
  * @param deps - `{ llm, createUserMessage }` from the Host.
  */
-export async function polishText(deps, route, transcript, signal, terms = [], context = '', timeoutMs = POLISH_TIMEOUT_MS) {
+export async function polishText(deps, route, transcript, signal, terms = [], context = '', timeoutMs = POLISH_TIMEOUT_MS, requireOff = false) {
 	const raw = String(transcript ?? '').trim();
 	if (raw === '') return '';
 	if (raw.length > MAX_TRANSCRIPT_CHARS) throw new Error('polish/too-long');
@@ -377,11 +411,12 @@ export async function polishText(deps, route, transcript, signal, terms = [], co
 		// prepared call refuses to dispatch when the stream options differ from it
 		// (`callConfigEquals`), which is what failed every cleanup after temperature was
 		// only added at the stream step.
-		const config = { ...await callConfig(deps.llm, route, timeout.signal), temperature: 0 };
+		const config = { ...await callConfig(deps.llm, route, timeout.signal, requireOff), temperature: 0 };
 		timeout.signal.throwIfAborted();
 		const prepared = await deps.llm.prepareCall(config, timeout.signal);
 		// Adapters only watch for a future abort; one that already happened must stop here.
 		timeout.signal.throwIfAborted();
+		if (requireOff && prepared.config?.reasoningEffort !== 'off') throw new Error('polish/reasoning-unavailable');
 		const message = deps.createUserMessage({
 			content: [{ type: 'text', text: polishUserText(raw, draftContext(context)) }],
 			source: { kind: 'user' },
@@ -396,7 +431,8 @@ export async function polishText(deps, route, transcript, signal, terms = [], co
 		if (strayed(raw, output)) throw new Error('polish/strayed');
 		return structureList(output);
 	} catch (error) {
-		if (timeout.signal.aborted && !signal?.aborted) throw new Error('polish/timeout');
+		if (signal?.aborted) throw signal.reason;
+		if (timeout.signal.aborted) throw new Error('polish/timeout');
 		throw error;
 	} finally {
 		clearTimeout(timer);
@@ -446,34 +482,62 @@ export function createPolishService(protocol, llmModule) {
 				provider: auto.providerName,
 				model: auto.modelName,
 				key: routeKey(auto),
+				capabilities: { reasoningOff: 1 },
 				routes: textRoutes(routes).slice(0, MAX_LISTED_ROUTES)
 					.map((route) => ({ key: routeKey(route), label: `${route.providerName} · ${route.modelName}` })),
 			};
 		}
 
-		/**
-		 * Clean one finished transcript; returns `{ text, model }`. `vocabulary` is the
-		 * user's comma- or line-separated list of preferred spellings (may be empty).
-		 */
+		/** Resolve only the selected route, including the effective automatic fallback. */
+		async reasoning(model, signal) {
+			const timeout = new AbortController();
+			const timer = setTimeout(() => timeout.abort(new Error('polish/reasoning-unavailable')), 5000);
+			const forward = () => timeout.abort(signal.reason);
+			if (signal?.aborted) forward();
+			else signal?.addEventListener('abort', forward, { once: true });
+			try {
+				const routes = await abortable(() => listRoutes(this.ctx.llm), timeout.signal);
+				const route = polishCandidates(routes, model, 1)[0];
+				return route ? await routeReasoning(this.ctx.llm, route, timeout.signal) : normalizeReasoning('');
+			} catch (error) {
+				if (signal?.aborted) throw signal.reason;
+				return normalizeReasoning('');
+			} finally {
+				clearTimeout(timer);
+				signal?.removeEventListener('abort', forward);
+			}
+		}
+
+		/** Keep the original Remote's parameter positions for older Clients. */
 		async polish(transcript, vocabulary, context, model, signal) {
+			return this.executePolish(transcript, vocabulary, context, model, signal, false);
+		}
+
+		async polishOff(transcript, vocabulary, context, model, signal) {
+			return this.executePolish(transcript, vocabulary, context, model, signal, true);
+		}
+
+		/** Shared cleanup; strict off is never relaxed on a retry. */
+		async executePolish(transcript, vocabulary, context, model, signal, requireOff) {
 			const candidates = polishCandidates(await listRoutes(this.ctx.llm), model);
+			signal?.throwIfAborted();
 			if (candidates.length === 0) throw new Error('polish/no-model');
 			const deps = { llm: this.ctx.llm, createUserMessage: llmModule.createUserMessage };
 			const terms = parseVocabulary(vocabulary);
 			const tried = [];
-			// One budget for the whole cleanup. A model that timed out has already spent it, so
+			// One budget for the attempts, after discovery. A timeout has already spent it, so
 			// the retry is for fast failures (a refused key, a stray reply), never a second wait.
 			const deadline = Date.now() + POLISH_TIMEOUT_MS;
 			for (const route of candidates) {
 				const left = deadline - Date.now();
 				if (tried.length > 0 && left < MIN_RETRY_MS) break;
 				try {
-					const text = await polishText(deps, route, transcript, signal, terms, context, left);
+					const text = await polishText(deps, route, transcript, signal, terms, context, left, requireOff);
 					return { text, model: route.modelName };
 				} catch (error) {
 					if (signal?.aborted) throw error;
 					const reason = failureReason(error);
-					tried.push({ model: route.modelName, reason, detail: String(error?.message ?? error).slice(0, 200) });
+					tried.push({ model: route.modelName, reason });
 					// The input itself is the problem; another model would fail the same way.
 					if (reason === 'too-long' && String(transcript ?? '').trim().length > MAX_TRANSCRIPT_CHARS) break;
 				}
@@ -486,5 +550,7 @@ export function createPolishService(protocol, llmModule) {
 	}
 	markRemote(protocol, PolishService, 'describe');
 	markRemote(protocol, PolishService, 'polish');
+	markRemote(protocol, PolishService, 'polishOff');
+	markRemote(protocol, PolishService, 'reasoning');
 	return PolishService;
 }

@@ -276,10 +276,13 @@ window.__ModuleLoader__.load({
 		const POLISH_REMOTE = {
 			package: '@jryang1997/dsh-hold-to-dictate',
 			descriptors: [
-				polishEndpoint('polish', [
+				...['polish', 'polishOff'].map((method) => polishEndpoint(method, [
 					{ name: 'transcript', wire: 'transcript', source: 'json', codec: STRING_CODEC },
 					{ name: 'vocabulary', wire: 'vocabulary', source: 'json', codec: STRING_CODEC },
 					{ name: 'context', wire: 'context', source: 'json', codec: STRING_CODEC },
+					{ name: 'model', wire: 'model', source: 'json', codec: STRING_CODEC },
+				], true)),
+				polishEndpoint('reasoning', [
 					{ name: 'model', wire: 'model', source: 'json', codec: STRING_CODEC },
 				], true),
 				polishEndpoint('describe', [], false),
@@ -314,6 +317,7 @@ window.__ModuleLoader__.load({
 			chord: { fallback: 'Control+Shift+Space', oneOf: Object.keys(CHORDS), kind: 'choice' },
 			live: { fallback: false, kind: 'switch' },
 			polish: { fallback: false, kind: 'switch' },
+			polishReasoningOff: { fallback: false, kind: 'switch' },
 			vocabulary: { fallback: '', kind: 'text', max: 600 },
 			polishModel: { fallback: '', kind: 'text', max: 200 },
 			language: { fallback: 'host', oneOf: Object.keys(LANGUAGE_LABELS), kind: 'choice' },
@@ -444,29 +448,29 @@ window.__ModuleLoader__.load({
 
 		/** Handles captured in `apply`, so a slot entry that receives no injected props still works. */
 		const runtime = { speech: null, limits: null, polish: null };
-		/**
-		 * Polish one transcript: `{ text }` on success, `{ text: null, reason }` otherwise.
-		 * Every failure means "use the original": a cleanup is never worth losing what the user said.
-		 * The reason is a short code the notice turns into words, and the full attempt list
-		 * goes to the console so a bug report can include it.
-		 */
+		/** Every failure keeps the original. Provider error text never reaches the console. */
 		const polishTranscript = async (transcript, vocabulary, context, signal) => {
 			const model = config.get('polishModel');
-			if (runtime.polish === null) return { text: null, reason: 'unavailable' };
+			const requireOff = config.get('polishReasoningOff');
+			const service = runtime.polish;
+			const method = requireOff ? 'polishOff' : 'polish';
+			if (typeof service?.[method] !== 'function') return { text: null, reason: requireOff ? 'reasoning-unavailable' : 'unavailable' };
 			try {
-				const result = await runtime.polish.polish(transcript, vocabulary, context, model, signal);
+				const result = await service[method](transcript, vocabulary, context, model, signal);
+				signal?.throwIfAborted();
 				if (result?.ok !== true) {
 					const message = String(result?.error?.message ?? result?.error ?? '');
-					console.warn('[hold-to-dictate] polish failed', result?.error);
-					return { text: null, reason: /^polish\/([a-z-]+)/.exec(message)?.[1] ?? 'remote' };
+					const code = /^polish\/([a-z-]+)/.exec(message)?.[1];
+					return { text: null, reason: requireOff ? 'reasoning-unavailable' : code && Object.hasOwn(POLISH_REASONS, code) ? code : 'remote' };
 				}
 				const text = String(result.value?.text ?? '').trim();
 				if (text !== '') return { text };
-				if (result.value?.tried) console.warn('[hold-to-dictate] polish failed', result.value.tried);
-				return { text: null, reason: String(result.value?.error ?? 'empty') };
+				const reason = String(result.value?.error ?? 'empty');
+				console.warn('[hold-to-dictate] polish failed', polishReasonKey(reason));
+				return { text: null, reason };
 			} catch (error) {
-				console.warn('[hold-to-dictate] polish failed', error);
-				return { text: null, reason: 'remote' };
+				if (signal?.aborted) throw signal.reason;
+				return { text: null, reason: requireOff ? 'reasoning-unavailable' : 'remote' };
 			}
 		};
 		/** Locale key that explains a polish failure reason code. */
@@ -478,8 +482,31 @@ window.__ModuleLoader__.load({
 			'too-long': 'polishWhyTooLong',
 			remote: 'polishWhyRemote',
 			unavailable: 'polishWhyRemote',
+			'reasoning-unavailable': 'polishWhyReasoning',
 		};
 		const polishReasonKey = (reason) => POLISH_REASONS[reason] ?? 'polishWhyModel';
+
+		/** A settings query owns its deadline and ignores late responses after cleanup. */
+		function queryReasoning(service, model, receive) {
+			const abort = new AbortController();
+			let live = true;
+			const timer = window.setTimeout(() => {
+				if (live) receive(null);
+				live = false;
+				abort.abort();
+			}, 5000);
+			Promise.resolve().then(() => {
+				if (!live) return null;
+				return service.reasoning(model, abort.signal);
+			}).then((result) => {
+				if (!live) return;
+				const value = result?.ok === true ? result.value : null;
+				receive(value && typeof value.key === 'string' && ['supported', 'unsupported', 'unknown'].includes(value.state)
+					&& Array.isArray(value.efforts) && value.efforts.every((effort) => typeof effort?.id === 'string' && typeof effort.name === 'string')
+					? value : null);
+			}, () => { if (live) receive(null); }).finally(() => window.clearTimeout(timer));
+			return () => { live = false; window.clearTimeout(timer); abort.abort(); };
+		}
 		/** The provider entry the Host selected, or undefined before its limits arrive. */
 		const selectedProvider = () => runtime.limits?.providers?.find((entry) => entry.id === runtime.limits.selection?.providerId);
 		/** -1, 0 or 1 for two `x.y.z` versions; a leading `v` and any suffix are ignored. */
@@ -594,15 +621,25 @@ window.__ModuleLoader__.load({
 			liveLabel: '边说边出字（实验）',
 			liveHint: '录音时滚动识别，文字可能修正；松开后整段定稿。仅对本地语音服务启用。',
 			polishLabel: 'AI 润色（实验）',
-			polishHint: '转写后用你在 DSH 里配好的模型整理一遍：去掉「嗯、那个」这类语气词，修正同音错字，补标点，口述的「第一、第二」整理成列表。会多等一两秒；失败时插入原文。转写文字会发给该模型的服务商。',
+			polishHint: '转写后用你在 DSH 里配好的模型整理一遍：去掉「嗯、那个」这类语气词，修正同音错字，补标点，口述的「第一、第二」整理成列表。会多等一段时间，长短取决于模型和服务渠道；失败时插入原文。转写文字会发给该模型的服务商。',
 			polishing: '润色中',
 			vocabularyLabel: '常用词',
 			vocabularyHint: '你常说的术语、项目名、人名，用逗号或换行分隔。润色听到发音相近的词时，会按这里的写法纠正。',
 			vocabularyPlaceholder: '例如：Claude Code, DSH, 根目录, Token',
 			polishModelLabel: '润色模型',
-			polishModelHint: '默认自动挑一个又快又便宜的文本模型。选中的模型被移除后，会自动回到自动选择。',
+			polishModelHint: '自动优先 DeepSeek 官方渠道，再按模型名称偏好轻量模型。选中的模型被移除后，会自动回到自动选择。',
 			polishModelAuto: '自动',
 			polishModelMissing: '已不可用',
+			polishReasoningOffLabel: '强制关闭思考',
+			polishReasoningOffHint: '默认自动选择档位，支持关闭时会关闭。开启后必须关闭思考，否则保留原文。',
+			reasoningEfforts: '可用档位',
+			reasoningAuto: '自动使用',
+			reasoningDefault: '服务商默认',
+			reasoningSupported: '支持关闭思考。',
+			reasoningUnsupported: '该模型未提供关闭选项，建议换用支持关闭思考的 DeepSeek 官方模型。',
+			reasoningUnknown: '暂时无法读取模型的思考设置，不能开启强制关闭。',
+			reasoningWarning: '强制关闭仍已保存。无法满足时保留原文；可关闭此开关或更换模型。',
+			polishWhyReasoning: '无法确认或执行关闭思考，请换模型或关闭强制选项',
 			polishFailed: '润色没成功（{reason}），已插入原文',
 			polishWhyTimeout: '模型超时',
 			polishWhyStrayed: '改动太大，没敢用',
@@ -676,15 +713,25 @@ window.__ModuleLoader__.load({
 			liveLabel: 'Live dictation (experimental)',
 			liveHint: 'Recognize while recording; words may be revised. Release to finalize the whole recording. Local speech providers only.',
 			polishLabel: 'AI polish (experimental)',
-			polishHint: 'After transcription, clean the text with a model you already set up in DSH: drop fillers like “um”, fix misheard words, add punctuation, and turn a spoken “first, second” into a list. Adds a second or two; inserts the original if it fails. The transcript is sent to that model\'s provider.',
+			polishHint: 'After transcription, clean the text with a model you already set up in DSH: drop fillers like “um”, fix misheard words, add punctuation, and turn a spoken “first, second” into a list. Waiting time depends on the model and service channel; inserts the original if it fails. The transcript is sent to that model\'s provider.',
 			polishing: 'Polishing',
 			vocabularyLabel: 'Vocabulary',
 			vocabularyHint: 'Terms, project names and people you often say, separated by commas or new lines. When polish hears something that sounds like one, it uses your spelling.',
 			vocabularyPlaceholder: 'e.g. Claude Code, DSH, Kubernetes, Token',
 			polishModelLabel: 'Polish model',
-			polishModelHint: 'Auto picks a fast, inexpensive text model. If the chosen model is removed, polish goes back to auto.',
+			polishModelHint: 'Auto prefers official DeepSeek channels, then light models by name. If the chosen model is removed, polish goes back to auto.',
 			polishModelAuto: 'Auto',
 			polishModelMissing: 'unavailable',
+			polishReasoningOffLabel: 'Require reasoning off',
+			polishReasoningOffHint: 'Auto selects off when supported. When enabled, reasoning must be off or the original is kept.',
+			reasoningEfforts: 'Available efforts',
+			reasoningAuto: 'Auto uses',
+			reasoningDefault: 'provider default',
+			reasoningSupported: 'Supports reasoning off.',
+			reasoningUnsupported: 'This model offers no off option. Choose an official DeepSeek model that supports it.',
+			reasoningUnknown: 'The model\'s reasoning settings are unavailable. Require-off cannot be enabled.',
+			reasoningWarning: 'The requirement is still saved. If it cannot be met, the original is kept. Turn this switch off or change models.',
+			polishWhyReasoning: 'reasoning off is unavailable; change models or turn off the requirement',
 			polishFailed: 'Polish failed ({reason}) — inserted the original',
 			polishWhyTimeout: 'the model timed out',
 			polishWhyStrayed: 'it changed too much to trust',
@@ -1592,7 +1639,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
   color:var(--dsw-alias-label-secondary); font:inherit; font-size:12px; line-height:22px; cursor:pointer;
   transition:background-color var(--dsh-htt-t-press,140ms) linear, color var(--dsh-htt-t-press,140ms) linear;
 }
-.dsh-htt-set-segment:hover, .dsh-htt-set-toggle:hover, .dsh-htt-set-reset:hover, .dsh-htt-set-check:hover:not([disabled]){
+.dsh-htt-set-segment:hover, .dsh-htt-set-toggle:hover:not([disabled]), .dsh-htt-set-reset:hover, .dsh-htt-set-check:hover:not([disabled]){
   background:var(--dsw-alias-interactive-bg-hover); color:var(--dsw-alias-label-primary);
 }
 .dsh-htt-set-segment[data-on], .dsh-htt-set-toggle[data-on]{
@@ -1602,7 +1649,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 .dsh-htt-set-reset, .dsh-htt-set-check{height:28px; line-height:26px}
 .dsh-htt-set-about a, .dsh-htt-set-hint a{color:inherit; text-decoration:underline; text-underline-offset:2px}
 .dsh-htt-set-hint a:hover{color:var(--dsw-alias-label-primary)}
-.dsh-htt-set-check[disabled]{opacity:.6; cursor:default}
+.dsh-htt-set-check[disabled], .dsh-htt-set-toggle[disabled]{opacity:.6; cursor:default}
 .dsh-htt-set-select{
   box-sizing:border-box; max-width:240px; height:28px; padding:0 6px;
   border:1px solid var(--dsw-alias-border-l2); border-radius:var(--dsw-radius-sm);
@@ -1642,6 +1689,23 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				}, () => {});
 				return () => { live = false; };
 			}, [values.polish]);
+			const [reasoning, setReasoning] = React.useState(null);
+			React.useEffect(() => {
+				setReasoning(null);
+				if (!values.polish || models?.capabilities?.reasoningOff !== 1 || typeof runtime.polish?.reasoning !== 'function') return undefined;
+				return queryReasoning(runtime.polish, values.polishModel, (value) => setReasoning({ model: values.polishModel, value }));
+			}, [values.polish, values.polishModel, models]);
+			const capability = reasoning?.model === values.polishModel ? reasoning.value : null;
+			const canRequireOff = models?.capabilities?.reasoningOff === 1
+				&& typeof runtime.polish?.polishOff === 'function' && capability?.state === 'supported' && capability.offEffort === 'off';
+			const reasoningHint = () => {
+				const label = models?.routes?.find((route) => route.key === capability?.key)?.label
+					?? (models?.key === capability?.key ? models?.model : '');
+				const details = capability
+					? `${label ? `${label} · ` : ''}${t('reasoningEfforts')}: ${capability.efforts.map((effort) => effort.name).join(', ') || t('reasoningDefault')} · ${t('reasoningAuto')}: ${capability.autoEffort ?? t('reasoningDefault')}. ` : '';
+				const status = canRequireOff ? t('reasoningSupported') : capability?.state === 'unsupported' ? t('reasoningUnsupported') : t('reasoningUnknown');
+				return `${t('polishReasoningOffHint')} ${details}${status}${values.polishReasoningOff && !canRequireOff ? ` ${t('reasoningWarning')}` : ''}`;
+			};
 			const modelOptions = () => {
 				const options = [{ key: '', label: models?.model ? `${t('polishModelAuto')} · ${models.model}` : t('polishModelAuto') }];
 				for (const route of models?.routes ?? []) {
@@ -1814,6 +1878,19 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						},
 						modelOptions().map((option) => h('option', { key: option.key || 'auto', value: option.key }, option.label)),
 					),
+				) : null,
+				values.polish ? row(
+					'polishReasoningOff', t('polishReasoningOffLabel'), reasoningHint(),
+					h('button', {
+						type: 'button', className: 'dsh-htt-set-toggle',
+						'aria-pressed': values.polishReasoningOff ? 'true' : 'false',
+						'aria-label': t('polishReasoningOffLabel'),
+						'data-on': values.polishReasoningOff ? '' : undefined,
+						disabled: !values.polishReasoningOff && !canRequireOff,
+						onClick: () => {
+							if (values.polishReasoningOff || canRequireOff) config.set('polishReasoningOff', !values.polishReasoningOff);
+						},
+					}, t(values.polishReasoningOff ? 'switchOn' : 'switchOff')),
 				) : null,
 				values.polish ? h(
 					'div',
@@ -2701,7 +2778,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						// it like the transcription, and every failure falls back to the words.
 						let text = transcript;
 						let polishMissed = '';
-						if (config.get('polish') && runtime.polish !== null) {
+						if (config.get('polish') && (runtime.polish !== null || config.get('polishReasoningOff'))) {
 							state.busy = true;
 							show({ phase: 'transcribing', notice: '', cancelled: false, polishing: true });
 							// What the user already wrote before the dictation point helps with names

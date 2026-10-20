@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {
 	POLISH_PROMPT, POLISH_SERVICE, POLISH_NAMESPACE, MAX_TRANSCRIPT_CHARS,
-	pickRoute, rankRoutes, polishCandidates, failureReason, isOfficial, listRoutes, collectText, tidyOutput, polishText, polishUserText, createPolishService,
+	pickRoute, rankRoutes, polishCandidates, failureReason, isOfficial, listRoutes, collectText, tidyOutput, polishText, polishUserText, createPolishService, normalizeReasoning,
 } from '../polish.js';
 
 const route = (model, modelName = model, modalities) => ({ provider: 'p', providerName: 'P', model, modelName, modalities });
@@ -22,7 +22,7 @@ assert.equal(pickRoute([]), null);
 	const pro = { provider: 'deepseek-official', providerName: 'DeepSeek', model: 'deepseek-v4-pro', modelName: 'DeepSeek-V4-Pro' };
 	assert.ok(isOfficial(official) && !isOfficial(gateway));
 	assert.equal(pickRoute([gateway, pro, official]), official);
-	// Even a slow official model beats a fast gateway: it can switch reasoning off.
+	// Official-channel preference is independent of the model's declared reasoning efforts.
 	assert.equal(pickRoute([gateway, pro]), pro);
 	assert.deepEqual(rankRoutes([gateway, pro, official]), [official, pro, gateway]);
 	// Candidates: the user's choice first, then the ranking, capped at two attempts.
@@ -127,7 +127,7 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 		},
 	};
 	const Service = createPolishService(protocol, { createUserMessage });
-	assert.deepEqual(Service.prototype[MARK], ['describe', 'polish']);
+	assert.deepEqual(Service.prototype[MARK], ['describe', 'polish', 'polishOff', 'reasoning']);
 	assert.deepEqual(Service.inject, ['llm']);
 	const llm = fakeLlm(() => stream([{ type: 'text-delta', text: 'Hello.' }]));
 	const service = new Service({ llm });
@@ -279,6 +279,165 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 	const retried = await new Service({ llm: flaky }).polish('帮我看一下', '', '', '', undefined);
 	assert.equal(tries, 2);
 	assert.equal(retried.text, '帮我看一下。');
+}
+
+// Declared efforts are normalized once. Only the literal `off` proves off support.
+{
+	const info = (efforts) => ({ reasoning: { efforts } });
+	assert.deepEqual(normalizeReasoning('p/m', info([{ id: 'high' }, { id: 'off', name: 'Off' }, { id: 'off' }, null, { id: 0 } ])), {
+		key: 'p/m', state: 'supported', efforts: [{ id: 'high', name: 'high' }, { id: 'off', name: 'Off' }], autoEffort: 'off', offEffort: 'off',
+	});
+	for (const efforts of [undefined, null, {}, [], [null, {}, { id: '' }, { id: 1 }]]) {
+		assert.equal(normalizeReasoning('p/m', info(efforts)).state, 'unknown');
+	}
+	for (const id of ['none', 'minimal', 'low', 'high', 'max']) {
+		const value = normalizeReasoning('p/m', info([{ id }]));
+		assert.equal(value.state, 'unsupported');
+		assert.equal(value.offEffort, null);
+	}
+}
+
+// Assert the actual prepare/stream boundary, not just the policy helper.
+{
+	const selected = route('flash');
+	for (const [efforts, expected] of [[['high', 'off'], 'off'], [['high', 'low'], 'low'], [['minimal', 'none'], 'none'], [['minimal'], 'minimal'], [[], undefined], [['high'], undefined]]) {
+		const seen = {};
+		const llm = fakeLlm(() => stream([{ type: 'text-delta', text: 'Hello.' }]), { efforts, seen });
+		await polishText({ llm, createUserMessage }, selected, 'hello');
+		assert.equal(seen.config.reasoningEffort, expected);
+		assert.equal(seen.options.reasoningEffort, expected);
+	}
+	for (const metadata of [async () => ({}), async () => { throw new Error('private provider error'); }]) {
+		const seen = {};
+		const llm = { ...fakeLlm(() => stream([{ type: 'text-delta', text: 'Hello.' }]), { seen }), resolveModelInfo: metadata };
+		await polishText({ llm, createUserMessage }, selected, 'hello');
+		assert.equal('reasoningEffort' in seen.config, false, 'automatic mode preserves the provider default');
+	}
+	const seen = {};
+	const supported = fakeLlm(() => stream([{ type: 'text-delta', text: 'Hello.' }]), { seen });
+	await polishText({ llm: supported, createUserMessage }, selected, 'hello', undefined, [], '', 15000, true);
+	assert.equal(seen.config.reasoningEffort, 'off');
+	assert.equal(seen.options.reasoningEffort, 'off');
+	for (const metadata of [async () => ({}), async () => ({ reasoning: { efforts: [{ id: 'low' }] } }), async () => { throw new Error('private error'); }]) {
+		let prepared = 0;
+		let streamed = 0;
+		const llm = { ...supported, resolveModelInfo: metadata, prepareCall: async () => { prepared += 1; return { config: {}, stream: () => { streamed += 1; } }; } };
+		await assert.rejects(polishText({ llm, createUserMessage }, selected, 'hello', undefined, [], '', 15000, true), /reasoning-unavailable/);
+		assert.equal(prepared, 0);
+		assert.equal(streamed, 0);
+	}
+	let streams = 0;
+	const dropped = { ...supported, prepareCall: async (config) => ({ config: { ...config, reasoningEffort: undefined }, stream: () => { streams += 1; } }) };
+	await assert.rejects(polishText({ llm: dropped, createUserMessage }, selected, 'hello', undefined, [], '', 15000, true), /reasoning-unavailable/);
+	assert.equal(streams, 0, 'a prepared call that drops off must not dispatch');
+	// Even metadata that never resolves can be cancelled, without a fallback request.
+	const abort = new AbortController();
+	const stuck = { ...supported, resolveModelInfo: () => new Promise(() => {}) };
+	const pending = polishText({ llm: stuck, createUserMessage }, selected, 'hello', abort.signal, [], '', 15000, true);
+	const reason = new Error('user cancelled');
+	abort.abort(reason);
+	await assert.rejects(pending, (error) => error === reason);
+}
+
+// The service advertises the protocol without resolving every model's metadata.
+{
+	const Service = createPolishService({
+		TypertRemoteService: class { constructor(ctx) { this.ctx = ctx; } }, Remote: () => {},
+	}, { createUserMessage });
+	let metadata = [];
+	const prepared = [];
+	let streams = 0;
+	const llm = {
+		...fakeLlm(() => stream([])),
+		resolveModelInfo: async (provider, model) => { metadata.push(`${provider}/${model}`); return { reasoning: { efforts: [{ id: 'off' }, { id: 'high' }] } }; },
+		prepareCall: async (config) => {
+			prepared.push(config);
+			return { config, stream: (options) => {
+				streams += 1;
+				assert.equal(config.reasoningEffort, 'off');
+				assert.equal(options.reasoningEffort, 'off');
+				return streams === 1 ? stream([{ type: 'finish', reason: { kind: 'error' } }]) : stream([{ type: 'text-delta', text: 'Hello.' }]);
+			} };
+		},
+	};
+	const service = new Service({ llm });
+	assert.deepEqual((await service.describe()).capabilities, { reasoningOff: 1 });
+	assert.deepEqual(metadata, [], 'describe must stay cheap');
+	assert.equal((await service.reasoning('')).key, 'ds/deepseek-flash');
+	assert.deepEqual(metadata, ['ds/deepseek-flash']);
+	metadata = [];
+	assert.equal((await service.reasoning('ds/deepseek-v4-pro')).key, 'ds/deepseek-v4-pro');
+	assert.deepEqual(metadata, ['ds/deepseek-v4-pro']);
+	assert.equal((await service.reasoning('gone/model')).key, 'ds/deepseek-flash');
+	metadata = [];
+	assert.equal((await service.polishOff('hello', '', '', '', undefined)).text, 'Hello.');
+	assert.equal(streams, 2);
+	assert.equal(prepared.length, 2);
+	assert.deepEqual(metadata, ['ds/deepseek-flash', 'ds/deepseek-v4-pro'], 'every actual attempt revalidates');
+	// A fast first failure cannot dispatch on a retry that only declares low.
+	streams = 0;
+	prepared.length = 0;
+	llm.resolveModelInfo = async (_provider, model) => ({ reasoning: { efforts: [{ id: model === 'deepseek-flash' ? 'off' : 'low' }] } });
+	const refused = await service.polishOff('hello', '', '', '', undefined);
+	assert.equal(refused.error, 'reasoning-unavailable');
+	assert.equal(streams, 1);
+	assert.equal(prepared.length, 1);
+	assert.deepEqual(refused.tried.map((attempt) => attempt.reason), ['incomplete', 'reasoning-unavailable']);
+	llm.resolveModelInfo = async () => ({ reasoning: { efforts: [{ id: 'low' }, { id: 'high' }, { id: 'max' }] } });
+	streams = 0;
+	prepared.length = 0;
+	assert.equal((await service.polishOff('hello')).error, 'reasoning-unavailable');
+	assert.equal(streams, 0);
+	assert.equal(prepared.length, 0);
+	assert.equal((await service.reasoning('')).state, 'unsupported');
+	llm.resolveModelInfo = async () => ({});
+	streams = 0;
+	prepared.length = 0;
+	assert.equal((await service.polishOff('hello')).error, 'reasoning-unavailable');
+	assert.equal(streams, 0);
+	assert.equal(prepared.length, 0);
+	assert.equal((await service.reasoning('')).state, 'unknown');
+	llm.resolveModelInfo = async () => { throw new Error('secret value'); };
+	const safe = await service.polishOff('hello');
+	assert.equal(JSON.stringify(safe).includes('secret value'), false);
+	assert.equal((await service.reasoning('')).state, 'unknown');
+	const cancel = new AbortController();
+	llm.resolveModelInfo = () => new Promise(() => {});
+	const query = service.reasoning('', cancel.signal);
+	cancel.abort(new Error('cancel query'));
+	await assert.rejects(query, /cancel query/);
+	// Query deadline also bounds a provider listing that ignores cancellation.
+	const realSetTimeout = globalThis.setTimeout;
+	let expire;
+	let bounded;
+	try {
+		globalThis.setTimeout = (callback, ms) => { assert.equal(ms, 5000); expire = callback; return 0; };
+		const unavailable = new Service({ llm: { ...llm, listModels: () => new Promise(() => {}) } });
+		bounded = unavailable.reasoning('');
+	} finally {
+		globalThis.setTimeout = realSetTimeout;
+	}
+	expire();
+	assert.equal((await bounded).state, 'unknown');
+	// Cancelling a running strict stream is still cancellation, with no retry.
+	let started;
+	const began = new Promise((resolve) => { started = resolve; });
+	streams = 0;
+	llm.resolveModelInfo = async () => ({ reasoning: { efforts: [{ id: 'off' }] } });
+	llm.prepareCall = async (config) => ({ config, stream: (options) => (async function* () {
+		streams += 1;
+		started();
+		await new Promise((resolve) => options.signal.addEventListener('abort', resolve, { once: true }));
+		yield { type: 'finish', reason: { kind: 'aborted' } };
+	})() });
+	const stop = new AbortController();
+	const running = service.polishOff('hello', '', '', '', stop.signal);
+	await began;
+	stop.abort(new Error('cancel stream'));
+	await assert.rejects(running, (error) => error === stop.signal.reason);
+	assert.equal(streams, 1);
+	assert.match(Function.prototype.toString.call(Service.prototype.polishOff), /^async polishOff\(transcript, vocabulary, context, model, signal\)/);
+	assert.match(Function.prototype.toString.call(Service.prototype.reasoning), /^async reasoning\(model, signal\)/);
 }
 
 console.log('polish: ok');

@@ -23,7 +23,7 @@ import { dirname, join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 // Expose the pure spring only to this harness, without expanding the plugin API.
 const source = readFileSync(join(here, '..', 'client.js'), 'utf8')
-	.replace('return { inject, apply };', 'return { inject, apply, settleLift };');
+	.replace('return { inject, apply };', 'return { inject, apply, settleLift, config, runtime, queryReasoning, polishTranscript, POLISH_REMOTE };');
 
 /*
  * The plugin asks `event.target instanceof Element`, and Node has no DOM at all. Declaring
@@ -560,11 +560,11 @@ check(inputActions.captured === 0, 'a non-chord key never starts a recording');
 //#region the settings page and the configuration behind it
 
 /** Mount the bundle's own page, with the DOM and listener registry reset. */
-const mountSettings = () => {
+const mountSettings = (states = []) => {
 	for (const cleanup of cleanups) cleanup();
 	cleanups = [];
 	listeners.clear();
-	preset = [];
+	preset = states;
 	hookIndex = 0;
 	refQueue = [];
 	const entry = registrations.get('plugins.bundle.config');
@@ -673,6 +673,120 @@ inputActions.captured = 0;
 render(true, IDLE);
 fire('keydown', key());
 check(inputActions.captured === 1, 'and so does the chord');
+
+// Reasoning controls use the selected Host declaration and remain reversible after changes.
+{
+	const { config, runtime } = bundle;
+	check(config.get('polishReasoningOff') === false, 'require-off defaults to false');
+	check(settingRow(mountSettings(), 'polishReasoningOff') === undefined, 'require-off is hidden until polish is on');
+	config.set('polish', true);
+	const models = { key: 'p/auto', model: 'Auto model', routes: [{ key: 'p/chosen', label: 'Chosen' }], capabilities: { reasoningOff: 1 } };
+	const capability = { key: 'p/auto', state: 'supported', efforts: [{ id: 'off', name: 'Off' }, { id: 'low', name: 'Low' }], autoEffort: 'off', offEffort: 'off' };
+	const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
+	const requests = [];
+	runtime.polish = {
+		reasoning: (model, signal) => { const pending = deferred(); requests.push({ model, signal, ...pending }); return pending.promise; },
+		polishOff: async () => ({ ok: true, value: { text: 'Hello.' } }),
+	};
+	const settings = (value, declared = models) => mountSettings([config.all(), declared, undefined, undefined, { model: config.get('polishModel'), value }]);
+	let current = settings(capability);
+	let control = find(settingRow(current, 'polishReasoningOff'), 'dsh-htt-set-toggle');
+	check(control.type === 'button' && control.props['aria-pressed'] === 'false' && control.props.disabled === false, 'declared off permits a semantic toggle');
+	check(JSON.stringify(settingRow(current, 'polishReasoningOff')).includes('Auto model'), 'automatic route capability names the effective model');
+	control.props.onClick();
+	check(config.get('polishReasoningOff') === true, 'enabling require-off persists the choice');
+	for (const value of [null, { ...capability, state: 'unknown', offEffort: null }, { ...capability, state: 'unsupported', offEffort: null, autoEffort: 'low', efforts: [{ id: 'low' }] }]) {
+		config.set('polishReasoningOff', true);
+		current = settings(value);
+		control = find(settingRow(current, 'polishReasoningOff'), 'dsh-htt-set-toggle');
+		check(control.props['aria-pressed'] === 'true' && control.props.disabled === false, 'saved true can always be unset when off is unavailable');
+		check(JSON.stringify(settingRow(current, 'polishReasoningOff')).includes('强制关闭仍已保存'), 'saved unsupported requirement has an actionable warning');
+		control.props.onClick();
+		check(config.get('polishReasoningOff') === false, 'unsetting an unavailable requirement works');
+		current = settings(value);
+		control = find(settingRow(current, 'polishReasoningOff'), 'dsh-htt-set-toggle');
+		check(control.props.disabled === true, 'unknown or unsupported off cannot be newly enabled');
+		control.props.onClick();
+		check(config.get('polishReasoningOff') === false, 'disabled handler also refuses enabling');
+	}
+	control = find(settingRow(settings(capability, { ...models, capabilities: undefined }), 'polishReasoningOff'), 'dsh-htt-set-toggle');
+	check(control.props.disabled === true, 'an old Host never claims require-off support');
+	config.set('polishModel', 'p/chosen');
+	current = mountSettings([config.all(), models, undefined, undefined, { model: '', value: capability }]);
+	check(!JSON.stringify(settingRow(current, 'polishReasoningOff')).includes('Auto model'), 'a capability from a previous selection is hidden immediately');
+	await Promise.resolve();
+	const chosen = requests.at(-1);
+	check(chosen?.model === 'p/chosen', 'settings query only the selected model');
+	config.set('polishModel', '');
+	current = settings(null);
+	await Promise.resolve();
+	const automatic = requests.at(-1);
+	check(chosen.signal.aborted && automatic.model === '', 'changing to auto cancels the previous selected query');
+	setCalls.length = 0;
+	chosen.resolve({ ok: true, value: { ...capability, key: 'p/chosen' } });
+	await Promise.resolve();
+	await Promise.resolve();
+	check(setCalls.length === 0, 'late selected-model response cannot overwrite auto capability');
+	automatic.resolve({ ok: true, value: capability });
+	await Promise.resolve();
+	await Promise.resolve();
+	check(setCalls.some((value) => value?.model === '' && value.value === capability), 'the current automatic query can publish');
+	// Deadline and unmount also invalidate late completion, even if the Remote ignores abort.
+	const published = [];
+	const pending = deferred();
+	let querySignal;
+	const dispose = bundle.queryReasoning({ reasoning: (_model, signal) => { querySignal = signal; return pending.promise; } }, '', (value) => published.push(value));
+	const deadline = timeouts.at(-1);
+	await Promise.resolve();
+	check(deadline.ms === 5000, 'capability query has a five-second UI deadline');
+	deadline.fn();
+	check(querySignal.aborted && published.length === 1 && published[0] === null, 'deadline aborts and clears unavailable capability');
+	pending.resolve({ ok: true, value: capability });
+	await Promise.resolve();
+	await Promise.resolve();
+	check(published.length === 1, 'deadline rejects a late success');
+	dispose();
+	const unmounted = deferred();
+	const cleanup = bundle.queryReasoning({ reasoning: () => unmounted.promise }, '', (value) => published.push(value));
+	await Promise.resolve();
+	cleanup();
+	unmounted.resolve({ ok: true, value: capability });
+	await Promise.resolve();
+	await Promise.resolve();
+	check(published.length === 1, 'unmount rejects a late success');
+	for (const reasoning of [() => { throw new Error('unavailable'); }, async () => ({ ok: false }), async () => ({ ok: true, value: { ...capability, efforts: [null] } })]) {
+		const received = [];
+		const release = bundle.queryReasoning({ reasoning }, '', (value) => received.push(value));
+		for (let tick = 0; tick < 5; tick += 1) await Promise.resolve();
+		check(received.length === 1 && received[0] === null, 'failed or malformed capability query reports unknown');
+		release();
+	}
+	// Mixed versions must not silently fall back to the old method.
+	let oldCalls = 0;
+	runtime.polish = { polish: async () => { oldCalls += 1; return { ok: true, value: { text: 'Hello.' } }; } };
+	config.set('polishReasoningOff', true);
+	check((await bundle.polishTranscript('hello', '', '')).reason === 'reasoning-unavailable' && oldCalls === 0, 'saved require-off refuses an old Host without sending polish');
+	runtime.polish = { ...runtime.polish, polishOff: async () => ({ ok: false }) };
+	check((await bundle.polishTranscript('hello', '', '')).text === null && oldCalls === 0, 'failed new endpoint never falls back to old polish');
+	let strictArgs;
+	runtime.polish.polishOff = async (...args) => { strictArgs = args; return { ok: true, value: { text: 'Hello.' } }; };
+	const signal = new AbortController().signal;
+	check((await bundle.polishTranscript('hello', 'term', 'context', signal)).text === 'Hello.', 'strict endpoint success is used');
+	check(strictArgs[3] === '' && strictArgs[4] === signal, 'strict endpoint retains model and cancellation parameter positions');
+	config.set('polishReasoningOff', false);
+	await bundle.polishTranscript('hello', '', '');
+	check(oldCalls === 1, 'automatic mode still uses original polish');
+	const descriptors = bundle.POLISH_REMOTE.descriptors;
+	for (const method of ['polish', 'polishOff']) {
+		const endpoint = descriptors.find((entry) => entry.method === method);
+		check(endpoint.parameters.map((entry) => entry.name).join(',') === 'transcript,vocabulary,context,model' && endpoint.cancellation.parameter === 'signal', `${method} descriptor keeps positional parameters`);
+	}
+	const endpoint = descriptors.find((entry) => entry.method === 'reasoning');
+	check(endpoint.parameters[0].name === 'model' && endpoint.cancellation.parameter === 'signal', 'reasoning descriptor is selected-model-only and cancellable');
+	runtime.polish = null;
+	config.reset();
+	mountSettings();
+}
 
 //#endregion
 
