@@ -48,12 +48,17 @@ window.__ModuleLoader__.load({
 		const CANCEL_FLICK_PX_PER_S = 150;
 		/** How much pointer history the release velocity is measured over. */
 		const VELOCITY_WINDOW_MS = 90;
+		/**
+		 * A chord let go sooner than this was a tap, not a hold. A tap used to end in "too
+		 * short"; it now keeps the take recording hands-free until the chord is pressed again.
+		 */
+		const CHORD_TAP_MS = 300;
 		/** Recordings shorter than this are dropped instead of transcribed. */
 		const MIN_SECONDS = 0.35;
 		/** Kept below the Host default (120 s) so the Host never rejects on duration. */
 		const MAX_SECONDS = 110;
 		/** This build's version; tests/package.test.mjs keeps it equal to package.json. */
-		const VERSION = '2.4.1';
+		const VERSION = '2.5.0';
 		const REPO_URL = 'https://github.com/jryang1997/dsh-hold-to-dictate';
 		const LATEST_RELEASE_API = 'https://api.github.com/repos/jryang1997/dsh-hold-to-dictate/releases/latest';
 		/** Kept below the Host default (4 MiB) so the Host never rejects on size. */
@@ -440,12 +445,8 @@ window.__ModuleLoader__.load({
 		/** Handles captured in `apply`, so a slot entry that receives no injected props still works. */
 		const runtime = { speech: null, limits: null, polish: null };
 		/**
-		 * Ask the Host to polish one finished transcript. `null` means "use the original":
-		 * no model, a timeout, a cancelled take or an odd reply all land here, because a
-		 * cleanup is never worth losing what the user said.
-		 */
-		/**
 		 * Polish one transcript: `{ text }` on success, `{ text: null, reason }` otherwise.
+		 * Every failure means "use the original": a cleanup is never worth losing what the user said.
 		 * The reason is a short code the notice turns into words, and the full attempt list
 		 * goes to the console so a bug report can include it.
 		 */
@@ -519,10 +520,40 @@ window.__ModuleLoader__.load({
 		const maxSeconds = () => Math.min(config.get('maxRecordSeconds'), runtime.limits?.maxDurationSeconds ?? MAX_SECONDS);
 		/** Audio cap: the smaller of the Host's limit and this plugin's ceiling. */
 		const maxBytes = () => Math.min(MAX_BYTES, runtime.limits?.maxAudioBytes ?? MAX_BYTES);
+		/**
+		 * Re-read the Host's provider catalog: selection, readiness, languages and limits. Asked
+		 * once at activation it went stale for the whole session, so a model prepared later, a
+		 * provider switched in settings, or a Host that was not ready at startup left live
+		 * dictation and the language hint deciding on old data. Throttled, never awaited by a take,
+		 * and a failure keeps whatever was known before.
+		 */
+		const CATALOG_REFRESH_MS = 10000;
+		let catalogAt = -Infinity;
+		let catalogPending = false;
+		const refreshCatalog = () => {
+			const speech = runtime.speech;
+			if (speech === null || typeof speech.catalog !== 'function' || catalogPending) return;
+			const now = performance.now();
+			if (now - catalogAt < CATALOG_REFRESH_MS) return;
+			catalogAt = now;
+			catalogPending = true;
+			void (async () => {
+				try {
+					const catalog = await speech.catalog();
+					if (catalog !== undefined && catalog.ok === true && runtime.speech === speech) runtime.limits = catalog.value ?? null;
+				} catch (error) {
+					/* keep what was known */
+				} finally {
+					catalogPending = false;
+				}
+			})();
+		};
 
 		const zh = {
 			hint: '按住鼠标语音输入文字 · 上滑取消',
 			release: '松开完成',
+			locked: '再按结束',
+			lockedHint: '免提录音中，再按 {chord} 结束，Esc 取消',
 			cancelHint: 'Esc 取消 · 上滑或移出输入框取消',
 			cancelReady: '松开丢弃',
 			cancelReadyHint: '松手即丢弃，移回输入框可继续',
@@ -558,12 +589,12 @@ window.__ModuleLoader__.load({
 			switchOn: '开',
 			switchOff: '关',
 			chordLabel: '键盘快捷键',
-			chordHint: '按住这个组合键同样可以说话，松开即转写。',
+			chordHint: '按住这个组合键同样可以说话，松开即转写。轻按一下进入免提录音，再按一次结束。',
 			chordOff: '关闭',
 			liveLabel: '边说边出字（实验）',
 			liveHint: '录音时滚动识别，文字可能修正；松开后整段定稿。仅对本地语音服务启用。',
 			polishLabel: 'AI 润色（实验）',
-			polishHint: '转写后用你在 DSH 里配好的模型整理一遍：去掉「嗯、那个」这类语气词，修正同音错字，补标点，口述的「第一、第二」整理成列表。会多等一两秒；失败时插入原文。',
+			polishHint: '转写后用你在 DSH 里配好的模型整理一遍：去掉「嗯、那个」这类语气词，修正同音错字，补标点，口述的「第一、第二」整理成列表。会多等一两秒；失败时插入原文。转写文字会发给该模型的服务商。',
 			polishing: '润色中',
 			vocabularyLabel: '常用词',
 			vocabularyHint: '你常说的术语、项目名、人名，用逗号或换行分隔。润色听到发音相近的词时，会按这里的写法纠正。',
@@ -603,6 +634,8 @@ window.__ModuleLoader__.load({
 		const en = {
 			hint: 'Hold to dictate · swipe up to cancel',
 			release: 'Release to finish',
+			locked: 'Press again to finish',
+			lockedHint: 'hands-free: press {chord} again to finish, Esc to cancel',
 			cancelHint: 'Esc, or swipe up / leave the box to cancel',
 			cancelReady: 'Release to discard',
 			cancelReadyHint: 'releasing now discards it — move back to keep it',
@@ -638,12 +671,12 @@ window.__ModuleLoader__.load({
 			switchOn: 'On',
 			switchOff: 'Off',
 			chordLabel: 'Keyboard shortcut',
-			chordHint: 'Hold this chord to dictate without a mouse; letting go transcribes.',
+			chordHint: 'Hold this chord to dictate without a mouse; letting go transcribes. Tap it once to record hands-free, and press it again to finish.',
 			chordOff: 'Off',
 			liveLabel: 'Live dictation (experimental)',
 			liveHint: 'Recognize while recording; words may be revised. Release to finalize the whole recording. Local speech providers only.',
 			polishLabel: 'AI polish (experimental)',
-			polishHint: 'After transcription, clean the text with a model you already set up in DSH: drop fillers like “um”, fix misheard words, add punctuation, and turn a spoken “first, second” into a list. Adds a second or two; inserts the original if it fails.',
+			polishHint: 'After transcription, clean the text with a model you already set up in DSH: drop fillers like “um”, fix misheard words, add punctuation, and turn a spoken “first, second” into a list. Adds a second or two; inserts the original if it fails. The transcript is sent to that model\'s provider.',
 			polishing: 'Polishing',
 			vocabularyLabel: 'Vocabulary',
 			vocabularyHint: 'Terms, project names and people you often say, separated by commas or new lines. When polish hears something that sounds like one, it uses your spelling.',
@@ -752,7 +785,9 @@ window.__ModuleLoader__.load({
 			const decoder = new AudioContext();
 			try {
 				const decoded = await decoder.decodeAudioData(bytes);
-				const seconds = Math.min(decoded.duration, MAX_SECONDS);
+				// The same cap the take was timed against. A fixed 110 s here silently cut the last
+				// seconds of a take the user had allowed to run to the Host's 120 s.
+				const seconds = Math.min(decoded.duration, maxSeconds());
 				const frames = Math.max(1, Math.round(seconds * 16000));
 				const offline = new OfflineAudioContext(1, frames, 16000);
 				const source = offline.createBufferSource();
@@ -860,7 +895,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 							worklet = new AudioWorkletNode(context, 'dsh-dictation-pcm');
 							worklet.port.onmessage = ({ data }) => {
 								if (released || !(data instanceof Float32Array)) return;
-								const chunk = data.subarray(0, Math.max(0, Math.floor(context.sampleRate * MAX_SECONDS) - frames));
+								const chunk = data.subarray(0, Math.max(0, Math.floor(context.sampleRate * maxSeconds()) - frames));
 								if (chunk.length === 0) return;
 								pcm.push(chunk); frames += chunk.length;
 								let energy = 0;
@@ -911,13 +946,23 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				 */
 				async snapshot(from = 0, to = null) {
 					if (released || frames < context.sampleRate * MIN_SECONDS) return null;
-					const samples = new Float32Array(frames);
-					let offset = 0;
-					for (const chunk of pcm) { samples.set(chunk, offset); offset += chunk.length; }
 					const rate = context.sampleRate;
 					const start = Math.max(0, Math.min(frames - 1, Math.round(from * rate)));
 					const end = to === null ? frames : Math.max(start + 1, Math.min(frames, Math.round(to * rate)));
-					const slice = start === 0 && end === frames ? samples : samples.subarray(start, end);
+					// Copy only the window. Rebuilding the whole take first cost a 20 MB allocation
+					// per refresh near the end of a long 48 kHz recording, for a window of seconds.
+					const slice = new Float32Array(end - start);
+					let offset = 0;
+					for (const chunk of pcm) {
+						const chunkEnd = offset + chunk.length;
+						if (chunkEnd > start) {
+							const lo = Math.max(start, offset);
+							const hi = Math.min(end, chunkEnd);
+							slice.set(chunk.subarray(lo - offset, hi - offset), lo - start);
+						}
+						offset = chunkEnd;
+						if (offset >= end) break;
+					}
 					const seconds = (end - start) / rate;
 					const window = { seconds, from: start / rate, to: end / rate };
 					if (rate === 16000) return { buffer: encodeWave(slice), ...window };
@@ -1584,6 +1629,10 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 			// The models polish can run on come from the Host; ask once polish is on.
 			const [models, setModels] = React.useState(null);
 			const [update, setUpdate] = React.useState({ state: 'idle' });
+			// What the user is typing into a number field, before it is a value. Clamping every
+			// keystroke made typing impossible: clearing "300" to type "450" snapped to the
+			// minimum at the first digit, and the next digit overshot to the maximum.
+			const [typing, setTyping] = React.useState({});
 			React.useEffect(() => {
 				if (!values.polish || runtime.polish === null || typeof runtime.polish.describe !== 'function') return undefined;
 				let live = true;
@@ -1638,9 +1687,24 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						min: field.min,
 						max: field.max,
 						step: field.step,
-						value: values[key],
+						value: typing[key] ?? values[key],
 						'aria-label': label,
-						onChange: (event) => config.set(key, event.target.value),
+						onChange: (event) => {
+							const text = String(event.target.value);
+							setTyping((current) => ({ ...current, [key]: text }));
+							const number = Number(text);
+							// In range already: take it now, so the stepper arrows still apply at once.
+							if (text.trim() !== '' && Number.isFinite(number) && number >= field.min && number <= field.max) config.set(key, number);
+						},
+						// Leaving the field settles it: clamped into range, or back to the last good value.
+						onBlur: (event) => {
+							const number = Number.parseFloat(event.target.value);
+							if (Number.isFinite(number)) config.set(key, number);
+							setTyping((current) => {
+								const { [key]: _, ...rest } = current;
+								return rest;
+							});
+						},
 					}),
 				);
 			};
@@ -1924,6 +1988,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 		const IDLE = {
 			phase: 'idle', notice: '', tone: 'info', leaving: false, cancelled: false, pending: '', polishing: false,
 			pendingLeaving: false, bubbleLeaving: false, arm: null, armLeaving: false, retryable: false, elapsed: 0,
+			locked: false,
 		};
 		/** Completion remains visible briefly, but never blocks another recording. */
 		const BUBBLE_PHASES = new Set(['recording', 'transcribing', 'complete']);
@@ -2044,6 +2109,9 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					busy: false,
 					cancelled: false,
 					keyboard: false,
+					// A chord tap: the take records hands-free until the chord comes down again.
+					locked: false,
+					tap: 0,
 					pointerId: null,
 					touch: false,
 					tolerance: ARM_TOLERANCE_PX,
@@ -2093,6 +2161,10 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					// restate it ends it, so a failure or cancel can never leave the label stuck.
 					if (patchValues.phase !== undefined && patchValues.polishing === undefined) {
 						patchValues = { ...patchValues, polishing: false };
+					}
+					// Hands-free is a recording state too; leaving the phase ends it the same way.
+					if (patchValues.phase !== undefined && patchValues.locked === undefined) {
+						patchValues = { ...patchValues, locked: false };
 					}
 					if (patchValues.phase !== undefined) {
 						// A phase change replaces the previous notice's timers.
@@ -2308,6 +2380,8 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					state.active = false;
 					state.busy = false;
 					state.keyboard = false;
+					state.locked = false;
+					clearTimeoutOf('tap');
 					state.retry = null;
 					state.span = null;
 					state.run += 1;
@@ -2417,12 +2491,15 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						return;
 					}
 					const run = ++state.run;
+					// This take decides on what is known now; the answer serves the next one.
+					refreshCatalog();
 					// A hold that starts while a previous transcription is still in flight
 					// abandons that request: the run check discards its result anyway, and
 					// left running it would spend the provider call twice.
 					if (state.abort !== null) state.abort.abort();
 					state.active = true;
 					state.busy = true;
+					state.locked = false;
 					// A new recording supersedes any failure still on screen, and whatever it
 					// was offering to retry.
 					state.retry = null;
@@ -2533,6 +2610,8 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					clearTimeoutOf('liveTimer');
 					state.active = false;
 					state.keyboard = false;
+					state.locked = false;
+					clearTimeoutOf('tap');
 					state.take.capture = null;
 					state.starting = null;
 					state.span = null;
@@ -2781,9 +2860,10 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 
 				const onEnter = () => {
 					measure();
+					refreshCatalog();
 					latest.current.setHovered(true);
 					// Coming back onto the card forgives a discard that was only armed.
-					if (state.active) {
+					if (state.active && !state.locked) {
 						setCancelArmed(false);
 						applyCancel(0);
 					}
@@ -2792,8 +2872,9 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					latest.current.setHovered(false);
 					// Arm rather than cancel: the user sees the red bubble and can still come
 					// back. A recording that is merely transcribing must also be allowed to
-					// land, which is why this only fires while a capture runs.
-					if (state.active) {
+					// land, which is why this only fires while a capture runs. A hands-free take is
+					// not steered by the pointer at all, so wandering off the card cannot discard it.
+					if (state.active && !state.locked) {
 						setCancelArmed(true);
 						applyCancel(1);
 					}
@@ -2822,11 +2903,20 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						event.preventDefault();
 						return;
 					}
+					// Pressing the chord again is what ends a hands-free take.
+					if (state.locked && state.active) {
+						event.preventDefault();
+						event.stopPropagation();
+						void finish();
+						return;
+					}
 					if (state.busy || state.active || state.timer !== 0) return;
 					if (latest.current.props.inputActions === undefined) return;
 					event.preventDefault();
 					event.stopPropagation();
 					state.keyboard = true;
+					clearTimeoutOf('tap');
+					state.tap = window.setTimeout(() => { state.tap = 0; }, CHORD_TAP_MS);
 					dropRing();
 					void begin();
 				};
@@ -2835,15 +2925,24 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				 * The chord ends when any of its three keys comes up, which is what makes
 				 * "release to transcribe" and "release to discard" behave exactly as they do
 				 * under the mouse.
+				 *
+				 * A release inside CHORD_TAP_MS was a tap. Its audio is too short to transcribe,
+				 * so instead of "too short" the take keeps recording hands-free — Typeless and
+				 * the phone keyboards offer the same — and the next chord press finishes it.
 				 */
 				const onKeyUp = (event) => {
 					if (!state.keyboard) return;
 					if (!isChordKey(event)) return;
 					event.preventDefault();
 					state.keyboard = false;
+					const tapped = state.tap !== 0;
+					clearTimeoutOf('tap');
 					if (state.active) {
 						if (state.cancelled) cancel(false);
-						else void finish();
+						else if (tapped) {
+							state.locked = true;
+							patch({ locked: true });
+						} else void finish();
 					}
 				};
 
@@ -2912,7 +3011,9 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						state.raf = 0;
 					}
 					detach();
+					clearTimeoutOf('tap');
 					state.keyboard = false;
+					state.locked = false;
 					state.retry = null;
 					state.run += 1;
 					if (state.abort !== null) state.abort.abort();
@@ -2927,6 +3028,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 			const completed = view.phase === 'complete';
 			const busy = recording || view.phase === 'transcribing';
 			const cancelled = recording && view.cancelled;
+			const locked = recording && !cancelled && view.locked === true;
 			// The hint is shown only when the tool row genuinely has room for it.
 			const showHint = hovered && view.phase === 'idle' && pending === ''
 				&& config.get('hint') && box.hintMax >= HINT_MIN_PX;
@@ -3039,7 +3141,9 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 								'aria-label': recording
 									? cancelled
 										? `${translate(props, 'cancelReady')} · ${translate(props, 'cancelReadyHint')}`
-										: `${translate(props, 'release')} · ${translate(props, 'cancelHint')}`
+										: locked
+											? `${translate(props, 'locked')} · ${translate(props, 'lockedHint', { chord: CHORDS[settings.chord]?.label ?? '' })}`
+											: `${translate(props, 'release')} · ${translate(props, 'cancelHint')}`
 									: translate(props, completed ? 'complete' : view.polishing ? 'polishing' : 'transcribing'),
 							},
 							h('span', { className: 'dsh-htt-material', 'aria-hidden': true }),
@@ -3087,7 +3191,8 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 								labelRow([
 									{ key: 'transcribe', on: !recording && !completed, text: translate(props, view.polishing ? 'polishing' : 'transcribing') },
 									{ key: 'complete', on: completed, text: translate(props, 'complete') },
-									{ key: 'release', on: recording && !cancelled, text: translate(props, 'release') },
+									{ key: 'release', on: recording && !cancelled && !locked, text: translate(props, 'release') },
+									{ key: 'locked', on: locked, text: translate(props, 'locked') },
 									{
 										key: 'cancel',
 										on: cancelled,
@@ -3196,16 +3301,10 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 			// composer simply keeps its normal behaviour.
 			ctx.inject(['remote.speech', 'slots'], (scope) => {
 				runtime.speech = scope.remote.speech;
-				// Pick up the Host's real recording limits once. A failure or an unexpected
-				// envelope only leaves the conservative local defaults in place.
-				void (async () => {
-					try {
-						const catalog = await scope.remote.speech.catalog();
-						if (catalog !== undefined && catalog.ok === true) runtime.limits = catalog.value ?? null;
-					} catch (error) {
-						/* keep the defaults */
-					}
-				})();
+				// Pick up the Host's real recording limits. A failure or an unexpected envelope only
+				// leaves the conservative local defaults in place; hovering the composer and every
+				// take ask again, so a later change is picked up too.
+				refreshCatalog();
 				scope.effect(() =>
 					scope.slots.inject(SLOT, () =>
 						scope.slots.register(

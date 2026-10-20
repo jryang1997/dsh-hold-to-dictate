@@ -393,6 +393,13 @@ check(
 	litText(tree).join('|') === '松开完成',
 	`recording shows one short word (got ${JSON.stringify(litText(tree))})`,
 );
+// Hands-free swaps the instruction, and the screen reader hears which chord ends it.
+const lockedTree = render(true, { ...IDLE, phase: 'recording', locked: true });
+check(litText(lockedTree).join('|') === '再按结束', `a hands-free take says how to end it (got ${JSON.stringify(litText(lockedTree))})`);
+check(find(lockedTree, 'dsh-htt-pill').props['aria-label'].includes('Ctrl + Shift + Space'),
+	'and the announcement names the chord');
+check(litText(render(true, { ...IDLE, phase: 'recording', locked: true, cancelled: true })).join('|') === '松开丢弃',
+	'discard still wins over hands-free');
 // The whole point of the redesign: nothing here can intercept a click, because the
 // bubble floats over the transcript and the old full-bleed panel used to shield the card.
 check(!names.includes('dsh-htt-panel'), 'the old full-card panel is gone');
@@ -582,13 +589,21 @@ check(find(settingRow(page, 'live'), 'dsh-htt-set-toggle').props['aria-pressed']
 	'live dictation starts off, as the README promises');
 
 // The field is not a suggestion: a stored or typed value is fitted to the schema.
-const typeHold = (value) => find(mountSettings(), 'dsh-htt-set-number').props.onChange({ target: { value } });
+// Typing settles on blur: a partial value is not clamped while the user is still typing it.
+const typeHold = (value) => {
+	const field = find(mountSettings(), 'dsh-htt-set-number');
+	field.props.onChange({ target: { value } });
+	field.props.onBlur({ target: { value } });
+};
+find(mountSettings(), 'dsh-htt-set-number').props.onChange({ target: { value: '4' } });
+check(find(mountSettings(), 'dsh-htt-set-number').props.value === 300,
+	'the first digit of "450" is not snapped to the minimum while typing');
 typeHold('99999');
 check(find(mountSettings(), 'dsh-htt-set-number').props.value === 800, 'a value above the range clamps');
 typeHold('10');
 check(find(mountSettings(), 'dsh-htt-set-number').props.value === 150, 'a value below the range clamps');
 typeHold('nonsense');
-check(find(mountSettings(), 'dsh-htt-set-number').props.value === 300, 'a value that is not a number falls back');
+check(find(mountSettings(), 'dsh-htt-set-number').props.value === 150, 'a value that is not a number keeps the last good one');
 typeHold('450');
 check(find(mountSettings(), 'dsh-htt-set-number').props.value === 450, 'a value inside the range sticks');
 

@@ -22,6 +22,7 @@ Hold the mouse button in the [DeepSeek Harness](https://github.com/deepseek-ai/d
 
 - **No recognizer of its own.** No dependencies at all: it reuses the local model and language list the official voice-input module already prepared, so there is no second model to download and nothing native to build.
 - **Mouse, touch and keyboard.** Hold the mouse for about 0.3 s; touch has its own 450 ms threshold so it does not fight word selection; or hold `Ctrl + Shift + Space`, with `Esc` to cancel.
+- **Long dictation without holding on.** Tap the shortcut once to record hands-free, and press it again when you are done.
 - **Your edits win.** If you edit the draft during recognition, the result waits in a chip at the lower right until you click it.
 - **A failure keeps the audio.** If the speech service is briefly unreachable, **Retry** sends the same recording again.
 - **Live dictation (experimental).** Long takes commit at sentence pauses and re-read only the new audio; releasing still finalizes from the whole recording.
@@ -83,6 +84,7 @@ Holding the mouse button for about 0.3 seconds starts recording.
 |---|---|
 | Record | Hold the mouse button in the message box, or hold `Ctrl + Shift + Space` |
 | Transcribe | Release |
+| Record hands-free | Tap the shortcut (let go within 0.3 s). The capsule reads "Press again to finish"; press the shortcut again to transcribe |
 | Cancel | Drag upward out of the box and release when the cancel cue appears, or press `Esc` |
 | Insert a held-back result | If you edited the draft during recognition, the transcript waits in a small chip at the lower right. Click it to insert at the caret |
 
@@ -147,7 +149,7 @@ For misheard technical words, fill in **Vocabulary** (shown once polish is on): 
 
 It does not rewrite, translate or answer what you said, and it **never sends** the message. It picks a light model automatically (names with Flash / Mini / Lite first) and turns reasoning off. The text goes to that model's provider, so leave it off if that matters to you.
 
-Any failure — no model, more than 15 s, an empty reply — inserts the original words and says so. Esc cancels polishing like it cancels transcription. The polish step runs on the Host through the official `@deepseek-ai/dsh-llm`; without it the plugin still works and always inserts the original.
+Any failure — no model, more than 15 s, an empty reply — inserts the original words and says so. The 15 s covers the whole cleanup: a model that fails quickly is retried once on the next one, but a model that timed out is not followed by a second wait. Esc cancels polishing like it cancels transcription. The polish step runs on the Host through the official `@deepseek-ai/dsh-llm`; without it the plugin still works and always inserts the original.
 
 The prompt draws on the polish rules of [dsh-better-input](https://github.com/DIAG5/dsh-better-input) (MIT).
 

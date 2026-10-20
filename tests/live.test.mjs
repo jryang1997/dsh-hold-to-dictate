@@ -7,7 +7,7 @@ const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve()
 globalThis.Element = class {};
 globalThis.Node = class {};
 
-function mount({ selected = false, live = true, location = 'host-local', workletAvailable = true, occurrences = [], stored, languages, language } = {}) {
+function mount({ selected = false, live = true, location = 'host-local', workletAvailable = true, occurrences = [], stored, languages, language, decoded = 4, limits = {} } = {}) {
 	let component, worklet, tree, now = 0, cursor = 0, mounted = false, wall = 0;
 	let draft = selected ? '前旧后' : '前后', rev = 0;
 	const hooks = [], effects = [], listeners = new Map(), timers = new Map(), calls = [], lifts = [];
@@ -55,7 +55,7 @@ function mount({ selected = false, live = true, location = 'host-local', worklet
 		audioWorklet = workletAvailable ? { addModule: async () => {} } : null;
 		createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
 		createAnalyser() { return { fftSize: 256, getFloatTimeDomainData: a => a.fill(.1) }; }
-		decodeAudioData = async () => ({ duration: 4 });
+		decodeAudioData = async () => ({ duration: decoded });
 		close = async () => {};
 	}
 	class Offline {
@@ -71,6 +71,7 @@ function mount({ selected = false, live = true, location = 'host-local', worklet
 		__ModuleLoader__: { load(module) { module.factory(() => React).apply({
 			locale: { register() {} }, effect: fn => fn(), inject: (_deps, fn) => fn({
 				effect: fn => fn(), remote: { speech: { catalog: async () => ({ ok: true, value: {
+					...limits,
 					selection: { providerId: 'local' },
 					providers: [{ id: 'local', location, ...(languages === undefined ? {} : { languages }) }],
 				} }) } },
@@ -196,7 +197,8 @@ serial.dispose();
 const restart = mount();
 await restart.start(); await restart.samples(); await restart.advance();
 await restart.cancel();
-await restart.start(); await restart.finish();
+// Held past the tap window: an instant release is now a tap, which records hands-free.
+await restart.start(); await restart.advance(400); await restart.finish();
 assert.equal(restart.calls.length, 2, 'a new recording finalizes independently of a cancelled preview');
 await restart.result(1, '新录音'); await restart.result(0, '旧录音');
 assert.equal(restart.draft, '前后新录音');
@@ -285,7 +287,8 @@ for (const options of [{ live: false }, { location: 'cloud' }, { workletAvailabl
 // loop meets all three of these often enough that they decide whether it feels live at all.
 const early = mount();
 await early.start();
-await early.advance(200);
+// Past the chord's tap window, so the only short timer left is the preview loop's own.
+await early.advance(300);
 assert.equal(early.calls.length, 0, 'a prefix shorter than MIN_SECONDS is not sent to the Host');
 assert.equal(early.nextDelay(), 120, 'and the loop comes back for more rather than giving up on it');await early.samples();
 await early.advance(200);
@@ -373,5 +376,61 @@ await brief.samples(1);
 await brief.advance(300);
 assert.equal(Buffer.from(brief.calls[1].request.audioBase64, 'base64').length, 44 + Math.round(5.4 * 32000), 'a pause too short to be a sentence break is not committed at');
 brief.dispose();
+
+// A chord tap used to end in "too short". It now keeps the take recording hands-free, and the
+// next press of the chord is what finishes it: the release of that press must not end anything.
+const tap = mount({ live: false });
+await tap.start(); await tap.finish();
+await tap.samples(3); await tap.advance(5000);
+assert.equal(tap.calls.length, 0, 'a tapped chord keeps recording instead of transcribing');
+await tap.pointer('pointerleave');
+await tap.start();
+assert.equal(tap.calls.length, 1, 'pressing the chord again finishes the hands-free take, even after the pointer left the card');
+await tap.finish();
+await tap.result(0, '免提输入');
+assert.equal(tap.draft, '前后免提输入', 'the hands-free take lands in the draft like any other');
+// The next take is an ordinary hold again: releasing it transcribes.
+await tap.start(); await tap.advance(400); await tap.finish();
+assert.equal(tap.calls.length, 2, 'hands-free does not stick to the next take');
+tap.dispose();
+
+const tapCancel = mount({ live: false });
+await tapCancel.start(); await tapCancel.finish(); await tapCancel.advance(2000);
+await tapCancel.cancel();
+await tapCancel.start(); await tapCancel.advance(400); await tapCancel.finish();
+assert.equal(tapCancel.calls.length, 1, 'Esc discards a hands-free take, and the chord starts a fresh one afterwards');
+await tapCancel.result(0, '新的');
+assert.equal(tapCancel.draft, '前后新的');
+tapCancel.dispose();
+
+// A preview reads only its window, so a long take copies seconds rather than the whole recording;
+// the bytes it sends are unchanged.
+{
+	const windowed = mount();
+	await windowed.start(); await windowed.samples(2); await windowed.advance();
+	await windowed.advanceWall(900); await windowed.result(0, '甲。');
+	await windowed.samples(2); await windowed.samples(1, 0); await windowed.samples(1, .3);
+	await windowed.advance(300); await windowed.result(1, '甲，乙。');
+	await windowed.advance(300);
+	const pcm = Buffer.from(windowed.calls[2].request.audioBase64, 'base64');
+	assert.equal(pcm.length, 44 + Math.round(1.5 * 32000), 'the window after a commit runs from the pause to now');
+	assert.equal(pcm.readInt16LE(44), 0, 'it starts inside the pause');
+	assert.equal(pcm.readInt16LE(pcm.length - 2), Math.trunc(Math.fround(.3) * 0x7fff), 'and ends on the newest speech');
+	windowed.dispose();
+}
+
+// The longest-recording setting may run a take to the Host's own 120 s. Decoding used to cut
+// every take at a fixed 110 s, so those last seconds were recorded and then silently dropped.
+{
+	const long = mount({ stored: JSON.stringify({ live: false, maxRecordSeconds: 120 }), limits: { maxDurationSeconds: 120 }, decoded: 118 });
+	await long.start(); await long.advance(400); await long.finish();
+	const sent = Buffer.from(long.calls[0].request.audioBase64, 'base64');
+	assert.equal(sent.length, 44 + 118 * 32000, 'a 118 s take allowed by the setting reaches the Host whole');
+	long.dispose();
+	const capped = mount({ stored: JSON.stringify({ live: false, maxRecordSeconds: 120 }), limits: { maxDurationSeconds: 120 }, decoded: 121 });
+	await capped.start(); await capped.advance(400); await capped.finish();
+	assert.equal(Buffer.from(capped.calls[0].request.audioBase64, 'base64').length, 44 + 120 * 32000, 'and never more than the Host accepts');
+	capped.dispose();
+}
 
 console.log('live: ok');

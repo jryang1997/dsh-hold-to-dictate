@@ -168,6 +168,9 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 	assert.equal(off('嗯那个帮我看一下跟目录下面的西克瑞特 key', '帮我看一下根目录下面的 secret key。'), false);
 	assert.equal(off('嗯嗯就是那个我觉得还行吧', '我觉得还行吧。'), false);
 	assert.equal(off('我们下周三和老王对一下进度', '下周三与王先生同步项目进展情况。'), true);
+	// 那个 / 就是 / 然后 are often real words. Keeping them is not inventing them.
+	assert.equal(off('那个方案就是我们上次说的那个然后定下来', '那个方案就是我们上次说的那个，然后定下来。'), false);
+	assert.equal(off('那个方案就是我们上次说的那个然后定下来', '方案是我们上次说的，定下来。'), false);
 	// A strayed reply is refused, so the Client inserts the original.
 	const llm = fakeLlm(() => stream([{ type: 'text-delta', text: '完全不同的一句话，跟原文毫无关系。' }]));
 	await assert.rejects(polishText({ llm, createUserMessage }, route('deepseek-flash'), '我们下周三和老王对一下进度'), /strayed/);
@@ -221,7 +224,8 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 
 // Model choice: a configured pick wins, a stale one falls back to auto.
 {
-	const { chooseRoute, routeKey } = await import('../polish.js');
+	const { routeKey } = await import('../polish.js');
+	const chooseRoute = (all, preferred) => polishCandidates(all, preferred)[0] ?? null;
 	const routes = [
 		{ provider: 'ds', providerName: 'DeepSeek', model: 'deepseek-v4-pro', modelName: 'DeepSeek-V4-Pro' },
 		{ provider: 'ds', providerName: 'DeepSeek', model: 'deepseek-flash', modelName: 'DeepSeek-V4.1-Flash' },
@@ -242,6 +246,39 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 	const described = await service.describe();
 	assert.equal(described.key.length > 0, true);
 	assert.ok(Array.isArray(described.routes) && described.routes.every((route) => typeof route.key === 'string' && typeof route.label === 'string'));
+}
+
+// One budget for the whole cleanup: a first attempt that used it up is not followed by a second wait.
+{
+	const Service = createPolishService({
+		TypertRemoteService: class { constructor(ctx) { this.ctx = ctx; } },
+		Remote: () => {},
+	}, { createUserMessage });
+	const realNow = Date.now;
+	let calls = 0;
+	const spent = fakeLlm(() => {
+		calls += 1;
+		const start = realNow();
+		Date.now = () => start + 13000;
+		return stream([{ type: 'finish', reason: { kind: 'error' } }]);
+	});
+	try {
+		const result = await new Service({ llm: spent }).polish('帮我看一下', '', '', '', undefined);
+		assert.equal(calls, 1, 'no retry once the budget is nearly gone');
+		assert.equal(result.text, '');
+		assert.equal(result.error, 'incomplete');
+	} finally {
+		Date.now = realNow;
+	}
+	// A fast failure still gets its one retry on the next model.
+	let tries = 0;
+	const flaky = fakeLlm(() => {
+		tries += 1;
+		return tries === 1 ? stream([{ type: 'finish', reason: { kind: 'error' } }]) : stream([{ type: 'text-delta', text: '帮我看一下。' }]);
+	});
+	const retried = await new Service({ llm: flaky }).polish('帮我看一下', '', '', '', undefined);
+	assert.equal(tries, 2);
+	assert.equal(retried.text, '帮我看一下。');
 }
 
 console.log('polish: ok');
