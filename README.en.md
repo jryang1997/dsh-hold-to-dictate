@@ -111,7 +111,8 @@ Under **Settings → Plugins → Hold to talk**. These settings apply to this ma
 | Keyboard shortcut | `Ctrl + Shift + Space` | Off / `Ctrl + Shift + Space` / `Ctrl + Shift + D` / `Ctrl + Shift + M` / `Ctrl + Alt + Space` |
 | Hover hint | On | On / Off |
 | AI polish (experimental) | Off | On / Off, see below |
-| Polish model | Auto | Shown once polish is on. Auto (a fast, inexpensive text model) or any text model you have configured |
+| Polish model | Auto | Shown once polish is on. Auto or any configured text model; selection rules below |
+| Require reasoning off | Off | Shown once polish is on. Can be enabled only when the current model explicitly declares `off`. Every request and retry must use `off`, otherwise the original is kept |
 | Vocabulary | Empty | Shown once polish is on. Separated by commas or new lines, up to 60 |
 | Motion | Full | Full / Calm (drops movement and scale, keeps the cross-fades) |
 | Live dictation (experimental) | Off | On / Off, see below |
@@ -161,9 +162,13 @@ Off by default; output quality is still being tuned. When on, a finished transcr
 
 For misheard technical words, fill in **Vocabulary** (shown once polish is on): terms, project names and people you often say, e.g. `Claude Code, DSH, Kubernetes`. Polish uses your spelling when it hears something close, and never inserts a term you did not say. Lists are laid out by code from spoken ordinals (第一 / 首先 / 一是 / first); a reply that changes too much is refused and the original is inserted.
 
-It does not rewrite, translate or answer what you said, and it **never sends** the message. It picks a light model automatically (names with Flash / Mini / Lite first) and turns reasoning off. The text goes to that model's provider, so leave it off if that matters to you.
+It does not rewrite, translate or answer what you said, and it **never sends** the message. Auto prefers official DeepSeek channels, then favors light text models with names such as Flash / Mini / Lite. It selects the lowest recognized declared reasoning effort in the order `off → none → minimal → low`, or leaves the provider default when none is available. `none` and `minimal` do not prove that thinking can be disabled. The text goes to that model's provider, so leave polish off if that matters to you.
 
-Any failure — no model, more than 15 s, an empty reply — inserts the original words and says so. The 15 s covers the whole cleanup: a model that fails quickly is retried once on the next one, but a model that timed out is not followed by a second wait. Esc cancels polishing like it cancels transcription. The polish step runs on the Host through the official `@deepseek-ai/dsh-llm`; without it the plugin still works and always inserts the original.
+**Require reasoning off** defaults to off. Auto already selects `off` when the model declares it. Enabling the switch requires explicit `off` on every request and retry, without falling back to `low` or omitting the option. Settings query only the selected model or the effective automatic choice and show its declared efforts, automatic effort and off support. These are capabilities reported by the Host, not verified vendor behavior. If a model change makes off unavailable, the saved switch stays visible and can always be turned off.
+
+For less waiting, choose an official DeepSeek model that explicitly declares `off`. The plugin already selects `off` for these models by default, without enabling **Require reasoning off**. A third-party channel declaring only `low / high / max` cannot be forced to stop thinking by this plugin. The switch cannot invent an undeclared capability. Even the same DeepSeek V4.1 Flash name can have different waiting times across channels; both the model and the service affect latency.
+
+Any failure, including an unmet off requirement, no model, a request timeout or an empty reply, keeps the original words and explains why. Model discovery takes additional time before model requests share a 15 s budget. A model that fails quickly is retried at most once on the next candidate if enough time remains. With require-off enabled, the retry must also declare and retain `off`. Esc cancels polishing like it cancels transcription. The polish step runs on the Host through the official `@deepseek-ai/dsh-llm`. A missing Host service or an older version without the new endpoint cannot apply require-off and keeps the original.
 
 The prompt draws on the polish rules of [dsh-better-input](https://github.com/DIAG5/dsh-better-input) (MIT).
 
