@@ -36,6 +36,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   switched in settings left live dictation and the language hint deciding on old data for the
   whole session. The catalog is now re-read (throttled to once per 10 s) on hovering the composer
   and on each take.
+- **The "Insert transcript" chip could wear a browser button border.** It was the only plugin
+  button that did not reset `border` and `font`, so outside a host stylesheet that resets
+  buttons it drew the default 2 px outset frame over its hairline. It now resets both, like the
+  plugin's other buttons.
 
 ### Changed
 
@@ -48,6 +52,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The polish setting now says in the app, not only in the README, that the transcript goes to
   the chosen model's provider.
 - Removed the unused `chooseRoute` helper and `route()` method from the Host polish service.
+- **READMEs show every feature, in each README's own language.** New animations for hands-free
+  recording and live dictation, a polish off/on comparison, the retained-transcript chip and the
+  Retry card, and a current settings screenshot replacing the two v1.5.2 ones. The settings tables
+  gain the longest-recording row (and, in English, the three polish rows). They are rendered from
+  the plugin's own components against DSH's own stylesheets with a synthetic microphone; the
+  READMEs say so. `screenshots.json` lists the new captures.
 
 ## [2.4.1] - 2026-10-14
 

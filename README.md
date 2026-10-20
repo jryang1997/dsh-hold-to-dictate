@@ -87,7 +87,15 @@ dsh plugin --profile <profile> add github:jryang1997/dsh-hold-to-dictate
 | 取消 | 向上拖出输入框，看到取消提示后松开；也可以按 `Esc` |
 | 插入被搁置的结果 | 识别期间改动过草稿时，转写文字会留在右下角的小标签里，点一下插到光标处 |
 
+<p align="center">
+  <img src="docs/hands-free.gif" width="960" alt="免提录音：轻按一下 Ctrl + Shift + Space，胶囊显示「再按结束」，松手也继续录；再按一次，文字插入草稿">
+</p>
+
 鼠标移入输入框时，工具行中间会显示一行提示，写着「按住鼠标语音输入文字 · 上滑取消」。工具行中间剩下的宽度不足 48 像素时（比如模型名很长），这行提示会被丢掉，而不是压在别的控件上。浅色、深色、降低透明度、增强对比度都正常。
+
+<p align="center">
+  <img src="docs/states.png" width="960" alt="两种情况：识别期间改了草稿，结果不覆盖，留在右下角的「插入转写」小标签里；转写失败时，录音还在，卡片上可以点「重试」">
+</p>
 
 ## 设置
 
@@ -97,6 +105,7 @@ dsh plugin --profile <profile> add github:jryang1997/dsh-hold-to-dictate
 |---|---|---|
 | 按住时长 | 300 毫秒 | 150 至 800 毫秒。手慢调长，误触调短 |
 | 触屏按住时长 | 450 毫秒 | 250 至 1200 毫秒。比鼠标长，因为触屏长按同时是选词 |
+| 最长录音 | 110 秒 | 15 至 600 秒。到点自动结束并转写；不会超过语音服务自己的上限（默认 120 秒） |
 | 识别语言 | 跟随宿主 | 跟随宿主 / 中文 / 英文 / 粤语 / 日文 / 韩文 |
 | 键盘快捷键 | `Ctrl + Shift + Space` | 关闭 / `Ctrl + Shift + Space` / `Ctrl + Shift + D` / `Ctrl + Shift + M` / `Ctrl + Alt + Space` |
 | 悬停提示 | 开 | 开 / 关 |
@@ -109,16 +118,10 @@ dsh plugin --profile <profile> add github:jryang1997/dsh-hold-to-dictate
 固定「识别语言」可以省掉宿主每次请求自己判断语种的那一步。实测多数长度下更快，也可能持平。
 
 <details>
-<summary>设置页面截图（v1.5.2 旧版）</summary>
+<summary>设置页面截图（v2.5.0）</summary>
 
 <p align="center">
-  <img src="docs/settings-user.png" width="960" alt="按住说话的设置页面：按住时长、触屏按住时长、动效、悬停提示和键盘快捷键">
-</p>
-
-这两张截图来自 v1.5.2。图中的说明文字当时有误，插件名称和图标也是旧的，并且都没有 v2.1.0 的「边说边出字」开关和 v2.2.0 的「识别语言」。以上面的表格为准。
-
-<p align="center">
-  <img src="docs/settings-user-2.png" width="960" alt="另一张设置页面截图，包含全部设置和组件运行状态">
+  <img src="docs/settings.png" width="720" alt="按住说话 v2.5.0 的设置页面：按住时长、触屏按住时长、最长录音、动效、悬停提示、识别语言、边说边出字、AI 润色、润色模型、常用词、键盘快捷键和关于">
 </p>
 
 </details>
@@ -126,6 +129,10 @@ dsh plugin --profile <profile> add github:jryang1997/dsh-hold-to-dictate
 ## 边说边出字（实验）
 
 开启后，录音期间会滚动调用官方本地语音模块，把识别结果写进草稿；松开后用整段录音定稿。
+
+<p align="center">
+  <img src="docs/live-preview.gif" width="960" alt="边说边出字：按住输入框说话，文字随说随出现在草稿里；松开后用整段录音定稿">
+</p>
 
 它的行为分两段：
 
@@ -146,6 +153,10 @@ dsh plugin --profile <profile> add github:jryang1997/dsh-hold-to-dictate
 - 口误自我纠正（「不对，我说的是…」）只留最后的说法
 - 修正同音错字和听错的术语（根木鹿 → 根目录，脱肯 → Token），补标点和中英文间空格
 - 口述「三件事，第一…第二…」时整理成 `1. 2. 3.` 列表；普通叙述不硬拆
+
+<p align="center">
+  <img src="docs/polish.png" width="960" alt="同一句话的对比：关闭润色时原话照录，带着「嗯、那个、就是、然后」；开启后去掉语气词、补上标点，并按常用词写成 DeepSeek Harness">
+</p>
 
 听错的专业词最好的办法是填「常用词」：把你常说的术语、项目名、人名填进去（如 `Claude Code, DSH, Kubernetes`），润色听到发音相近的词会按你的写法纠正，但不会凭空插入。列表由代码按「第一 / 首先 / 一是 / first」这类序数词排版；模型改动太大时会被拒绝并插入原文。
 
@@ -191,6 +202,8 @@ target: github:jryang1997/dsh-hold-to-dictate 安装，并提示我刷新页面�
 ## 需要知道
 
 识别使用 Harness 当前选择的语音服务。官方默认是本地 SenseVoice，音频不出这台电脑；如果你配置了云端服务，录音会发给该服务。
+
+首页录屏是真机实录。其余截图和动图由插件自己的组件在无头浏览器里渲染：输入框外壳按 DSH 官方样式还原，麦克风是合成音频，识别和润色结果是示例文字。
 
 社区插件，与 DeepSeek 无隶属关系。已在 DeepSeek Harness `0.2.0-rc.2` 上测试。
 

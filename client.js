@@ -1112,6 +1112,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 .dsh-htt-pending{
   position:absolute; display:flex; align-items:center; gap:6px;
   box-sizing:border-box; height:26px; padding:0 9px;
+  border:0; font:inherit;
   border-radius:var(--dsw-radius-sm);
   background:var(--dsw-alias-bg-layer-2);
   --dsw-elevation-stroke-color:var(--dsw-alias-border-l2);
