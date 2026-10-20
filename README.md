@@ -1,4 +1,4 @@
-<img src="icon.svg" width="64" height="64" alt="按住说话图标">
+<img src="icon.png" width="128" height="128" alt="按住说话图标">
 
 # 按住说话
 

@@ -1,4 +1,4 @@
-<img src="icon.svg" width="64" height="64" alt="Hold to talk logo">
+<img src="icon.png" width="128" height="128" alt="Hold to talk logo">
 
 # Hold to talk
 

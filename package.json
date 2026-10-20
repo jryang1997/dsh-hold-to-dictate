@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Hold-to-talk dictation for the DeepSeek Harness composer: long-press the input box, release to transcribe into the draft",
   "license": "MIT",
-  "icon": "./icon.svg",
+  "icon": "./icon.png",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -38,7 +38,7 @@
     "client.js",
     "polish.js",
     "cordis.patch.yml",
-    "icon.svg",
+    "icon.png",
     "locale/*.json",
     "docs/*.md",
     "docs/dictation-demo.gif",

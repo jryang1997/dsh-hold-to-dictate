@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Hold to talk">
-  <rect width="32" height="32" rx="7" fill="#4d6bfe" />
-  <path d="M11 8.5h10a7.25 7.25 0 0 1 0 14.5H10.5l-4.25 2.6q-1.1.65-.8-.6l.7-2.95A7.25 7.25 0 0 1 11 8.5Z" fill="#fff" />
-  <g fill="#4d6bfe">
-    <rect x="10.5" y="13" width="2.8" height="5.5" rx="1.4" />
-    <rect x="14.6" y="10.75" width="2.8" height="10" rx="1.4" />
-    <rect x="18.7" y="13" width="2.8" height="5.5" rx="1.4" />
-  </g>
-</svg>
