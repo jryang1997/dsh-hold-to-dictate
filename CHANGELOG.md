@@ -7,6 +7,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-10-20
+
+### Added
+
+- AI polish settings show the selected model's declared reasoning efforts and the automatic choice.
+- **Require reasoning off** requests explicit `off` on every attempt, including retries. It can only
+  be enabled when the model declares support. If the requirement cannot be met, the original
+  transcript is kept. A saved requirement can always be turned off after changing models.
+
+### Changed
+
+- Reasoning settings are queried only for the selected model, with cancellation and a deadline.
+  Late replies cannot replace the settings for a newly selected model.
+- The default automatic policy still selects `off` when declared, then the lowest recognized effort.
+  Both READMEs explain why some third-party channels cannot disable thinking and recommend an
+  official DeepSeek model that declares `off`. Waiting time depends on the model and service.
+- Polish hints no longer promise a fixed one-to-two-second wait. Documentation distinguishes model
+  discovery time from the shared 15-second request budget.
+
 ## [2.5.0] - 2026-10-20
 
 ### Added
@@ -552,8 +571,9 @@ First release — the hold-to-talk gesture and everything it needs to be safe to
 - Localised `zh` / `en`; light and dark themes; graceful degradation when a host contract is
   missing.
 
-[Unreleased]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.5.0...HEAD
-[2.5.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.4.1...v2.5.0
+[Unreleased]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/cb6cb3919d7fddb4805939c77e63d1c880e34358...v2.6.0
+[2.5.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.4.1...cb6cb3919d7fddb4805939c77e63d1c880e34358
 [2.4.1]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.2.0...v2.3.0
