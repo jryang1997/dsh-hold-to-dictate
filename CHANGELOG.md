@@ -57,7 +57,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Retry card, and a current settings screenshot replacing the two v1.5.2 ones. The settings tables
   gain the longest-recording row (and, in English, the three polish rows). They are rendered from
   the plugin's own components against DSH's own stylesheets with a synthetic microphone; the
-  READMEs say so. `screenshots.json` lists the new captures.
+  READMEs say so. `screenshots.json` lists the new captures, and the six older captures nothing
+  referenced any more are removed.
 
 ## [2.4.1] - 2026-10-14
 
