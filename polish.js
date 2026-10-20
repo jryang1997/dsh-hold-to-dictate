@@ -14,7 +14,10 @@ export const POLISH_NAMESPACE = 'holdToDictate';
 export const MAX_TRANSCRIPT_CHARS = 4000;
 /** The model may add list markers and punctuation, never twice the text. */
 export const MAX_OUTPUT_FACTOR = 2;
+/** The whole cleanup's budget, retry included: the user never waits longer than this. */
 export const POLISH_TIMEOUT_MS = 15000;
+/** A retry only starts when at least this much of the budget is left. */
+export const MIN_RETRY_MS = 3000;
 
 export const POLISH_PROMPT = `# Role
 You clean speech-recognition transcripts. Remove spoken noise and restore punctuation while keeping the speaker's own words. You are a careful proofreader, not an editor: do not rewrite, paraphrase, reorder, summarize, expand, translate, or answer.
@@ -168,7 +171,6 @@ export function failureReason(error) {
 	return code ? code[1] : 'model-error';
 }
 
-/** Every provider's models, skipping a provider whose listing fails. */
 /** A stable id for one provider + model pair, as stored in the Client's settings. */
 export const routeKey = (route) => `${route.provider}/${route.model}`;
 
@@ -178,15 +180,7 @@ export const MAX_LISTED_ROUTES = 50;
 /** Text-capable routes, the only ones a cleanup can run on. */
 const textRoutes = (routes) => routes.filter((route) => route.modalities === undefined || route.modalities.includes('text'));
 
-/** The user's chosen route when it is still configured, else the automatic pick. */
-export function chooseRoute(routes, preferred = '') {
-	if (typeof preferred === 'string' && preferred !== '') {
-		const chosen = textRoutes(routes).find((route) => routeKey(route) === preferred);
-		if (chosen !== undefined) return chosen;
-	}
-	return pickRoute(routes);
-}
-
+/** Every provider's models, skipping a provider whose listing fails. */
 export async function listRoutes(llm) {
 	const routes = [];
 	for (const provider of llm.listProviders()) {
@@ -305,10 +299,14 @@ export function divergence(raw, output) {
 /** Spoken noise the model is told to delete, so deleting it never counts as straying. */
 const FILLERS = /嗯|呃|额|啊|哎|那个|就是说|就是|然后|\b(?:um+|uh+|erm|you know)\b/gi;
 
-/** Reject an output that rewrote rather than cleaned. */
+/**
+ * Reject an output that rewrote rather than cleaned. Fillers are dropped from both sides:
+ * 那个 / 就是 / 然后 are often real words (那个方案, 问题就是), and a model that rightly keeps
+ * them must not read as inventing them.
+ */
 export function strayed(raw, output) {
 	const spoken = raw.replace(FILLERS, '');
-	const { inserted, kept } = divergence(spoken, output);
+	const { inserted, kept } = divergence(spoken, output.replace(FILLERS, ''));
 	const size = comparable(spoken).length;
 	return inserted > Math.max(4, Math.ceil(size * 0.3)) || kept < 0.4;
 }
@@ -365,12 +363,12 @@ async function callConfig(llm, route, signal) {
  * Run one cleanup. Returns the polished text, or throws; the caller keeps the original.
  * @param deps - `{ llm, createUserMessage }` from the Host.
  */
-export async function polishText(deps, route, transcript, signal, terms = [], context = '') {
+export async function polishText(deps, route, transcript, signal, terms = [], context = '', timeoutMs = POLISH_TIMEOUT_MS) {
 	const raw = String(transcript ?? '').trim();
 	if (raw === '') return '';
 	if (raw.length > MAX_TRANSCRIPT_CHARS) throw new Error('polish/too-long');
 	const timeout = new AbortController();
-	const timer = setTimeout(() => timeout.abort(new Error('polish/timeout')), POLISH_TIMEOUT_MS);
+	const timer = setTimeout(() => timeout.abort(new Error('polish/timeout')), Math.max(0, timeoutMs));
 	const forward = () => timeout.abort(signal.reason);
 	if (signal?.aborted) forward();
 	else signal?.addEventListener('abort', forward, { once: true });
@@ -436,10 +434,6 @@ export function createPolishService(protocol, llmModule) {
 			super(ctx, POLISH_SERVICE, { namespace: POLISH_NAMESPACE });
 		}
 
-		async route(preferred = '') {
-			return chooseRoute(await listRoutes(this.ctx.llm), preferred);
-		}
-
 		/**
 		 * Which model a cleanup would pick on its own, and every text model the user could
 		 * choose instead. `null` when no model is configured at all.
@@ -467,9 +461,14 @@ export function createPolishService(protocol, llmModule) {
 			const deps = { llm: this.ctx.llm, createUserMessage: llmModule.createUserMessage };
 			const terms = parseVocabulary(vocabulary);
 			const tried = [];
+			// One budget for the whole cleanup. A model that timed out has already spent it, so
+			// the retry is for fast failures (a refused key, a stray reply), never a second wait.
+			const deadline = Date.now() + POLISH_TIMEOUT_MS;
 			for (const route of candidates) {
+				const left = deadline - Date.now();
+				if (tried.length > 0 && left < MIN_RETRY_MS) break;
 				try {
-					const text = await polishText(deps, route, transcript, signal, terms, context);
+					const text = await polishText(deps, route, transcript, signal, terms, context, left);
 					return { text, model: route.modelName };
 				} catch (error) {
 					if (signal?.aborted) throw error;

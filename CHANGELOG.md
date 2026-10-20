@@ -7,6 +7,59 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-20
+
+### Added
+
+- **Hands-free recording.** Tap the keyboard shortcut (let go within 0.3 s) and the take keeps
+  recording without a held key; press the shortcut again to transcribe, or `Esc` to discard. A
+  tap used to end in "too short", so no working gesture changes meaning. The capsule reads
+  "Press again to finish" and announces which chord ends it. Moving the mouse off the composer
+  cannot discard a hands-free take.
+
+### Fixed
+
+- **Takes longer than 110 s lost their end.** Since the longest-recording setting arrived in
+  2.4.0, a take could run to the Host's 120 s, but decoding still cut every recording at a fixed
+  110 s, so the last seconds were recorded and silently dropped. Decoding and the live PCM buffer
+  now use the same cap the take is timed against.
+- **AI polish refused correct cleanups as "changed too much".** The stray guard removed
+  那个 / 就是 / 然后 / 额 from the transcript but not from the reply, so a model that rightly kept
+  them as real words (那个方案, 问题就是, 金额) was counted as inventing them. Both sides are now
+  compared without fillers.
+- **Typing into a number setting was impossible.** Every keystroke was clamped, so clearing
+  "300" to type "450" snapped to the minimum at the first digit and overshot to the maximum at the
+  next. A typed value is now taken as soon as it is in range and settled (clamped, or back to the
+  last good value) when the field loses focus; the stepper arrows still apply at once.
+- **The speech catalog went stale.** Provider selection, readiness, languages and limits were
+  read once at startup, so a Host that was not ready yet, a model prepared later, or a provider
+  switched in settings left live dictation and the language hint deciding on old data for the
+  whole session. The catalog is now re-read (throttled to once per 10 s) on hovering the composer
+  and on each take.
+- **The "Insert transcript" chip could wear a browser button border.** It was the only plugin
+  button that did not reset `border` and `font`, so outside a host stylesheet that resets
+  buttons it drew the default 2 px outset frame over its hairline. It now resets both, like the
+  plugin's other buttons.
+
+### Changed
+
+- **AI polish has one 15 s budget, retry included.** A first model that timed out used to be
+  followed by a second 15 s attempt, up to 30 s of "Polishing". The retry now only runs when at
+  least 3 s of the budget is left, which keeps it for fast failures.
+- **Live previews copy only their window.** Each refresh used to rebuild the whole recording
+  before slicing it — about 20 MB per refresh near the end of a long 48 kHz take — even when it
+  only sent the seconds since the last commit. The bytes sent are unchanged.
+- The polish setting now says in the app, not only in the README, that the transcript goes to
+  the chosen model's provider.
+- Removed the unused `chooseRoute` helper and `route()` method from the Host polish service.
+- **READMEs show every feature, in each README's own language.** New animations for hands-free
+  recording and live dictation, a polish off/on comparison, the retained-transcript chip and the
+  Retry card, and a current settings screenshot replacing the two v1.5.2 ones. The settings tables
+  gain the longest-recording row (and, in English, the three polish rows). They are rendered from
+  the plugin's own components against DSH's own stylesheets with a synthetic microphone; the
+  READMEs say so. `screenshots.json` lists the new captures, and the six older captures nothing
+  referenced any more are removed.
+
 ## [2.4.1] - 2026-10-14
 
 ### Fixed
@@ -499,7 +552,8 @@ First release — the hold-to-talk gesture and everything it needs to be safe to
 - Localised `zh` / `en`; light and dark themes; graceful degradation when a host contract is
   missing.
 
-[Unreleased]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.4.1...HEAD
+[Unreleased]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/jryang1997/dsh-hold-to-dictate/compare/v2.2.0...v2.3.0

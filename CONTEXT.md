@@ -6,6 +6,7 @@ The words this repo uses for the dictation gesture. Code, tests, issues and PRs 
 |---|---|
 | **Hold** | Press and keep holding inside the composer card. The gesture arms at the hold threshold and disarms if the pointer moves more than 10 px first. |
 | **Take** | One recording, from the start of a hold to release or cancel. Every piece of per-recording state belongs to a take. |
+| **Hands-free take** | A take started by a chord *tap* (released within `CHORD_TAP_MS`). It keeps recording without a held key or pointer; the next chord press finishes it and `Esc` discards it. The pointer cannot arm discard on it. |
 | **Owned range** | The draft range a take writes into, captured with `captureInsertion()` and guarded by `draftRev`. Only the take's own text is ever replaced. |
 | **Live preview** | An opt-in, provisional transcript shown while the hold continues. Each preview is an independent unary `speech.transcribe` call on a complete WAV. |
 | **Live plan** | The pure scheduling rules for live previews: cadence, backoff, starve limit and windowing (`createLivePlan`). |

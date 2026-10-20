@@ -22,6 +22,7 @@ Hold the mouse button in the [DeepSeek Harness](https://github.com/deepseek-ai/d
 
 - **No recognizer of its own.** No dependencies at all: it reuses the local model and language list the official voice-input module already prepared, so there is no second model to download and nothing native to build.
 - **Mouse, touch and keyboard.** Hold the mouse for about 0.3 s; touch has its own 450 ms threshold so it does not fight word selection; or hold `Ctrl + Shift + Space`, with `Esc` to cancel.
+- **Long dictation without holding on.** Tap the shortcut once to record hands-free, and press it again when you are done.
 - **Your edits win.** If you edit the draft during recognition, the result waits in a chip at the lower right until you click it.
 - **A failure keeps the audio.** If the speech service is briefly unreachable, **Retry** sends the same recording again.
 - **Live dictation (experimental).** Long takes commit at sentence pauses and re-read only the new audio; releasing still finalizes from the whole recording.
@@ -83,10 +84,19 @@ Holding the mouse button for about 0.3 seconds starts recording.
 |---|---|
 | Record | Hold the mouse button in the message box, or hold `Ctrl + Shift + Space` |
 | Transcribe | Release |
+| Record hands-free | Tap the shortcut (let go within 0.3 s). The capsule reads "Press again to finish"; press the shortcut again to transcribe |
 | Cancel | Drag upward out of the box and release when the cancel cue appears, or press `Esc` |
 | Insert a held-back result | If you edited the draft during recognition, the transcript waits in a small chip at the lower right. Click it to insert at the caret |
 
+<p align="center">
+  <img src="docs/hands-free.en.gif" width="960" alt="Hands-free: tap Ctrl + Shift + Space, the capsule reads Press again to finish and keeps recording with no key held; press again and the text lands in the draft">
+</p>
+
 Moving the pointer into the composer shows a hint line in the middle of the tool row reading "Hold to dictate · swipe up to cancel". When the free space in that row drops under 48 px, as with a long model label, the hint is dropped rather than drawn over the controls beside it. Light, dark, reduced transparency and increased contrast all keep working.
+
+<p align="center">
+  <img src="docs/states.en.png" width="960" alt="Two cases: edit the draft during recognition and the result waits in an Insert transcript chip instead of overwriting; if transcription fails, the recording is kept and the card offers Retry">
+</p>
 
 ## Settings
 
@@ -96,25 +106,23 @@ Under **Settings → Plugins → Hold to talk**. These settings apply to this ma
 |---|---|---|
 | Hold duration | 300 ms | 150 to 800 ms. Longer if your hand is slow, shorter if it fires by accident |
 | Hold duration on a touch screen | 450 ms | 250 to 1200 ms. Longer than the mouse because a long press also selects a word |
+| Longest recording | 110 s | 15 to 600 s. A take stops and is transcribed at this length; never past the speech service's own limit (120 s by default) |
 | Recognition language | Host decides | Host decides / Chinese / English / Cantonese / Japanese / Korean |
 | Keyboard shortcut | `Ctrl + Shift + Space` | Off / `Ctrl + Shift + Space` / `Ctrl + Shift + D` / `Ctrl + Shift + M` / `Ctrl + Alt + Space` |
 | Hover hint | On | On / Off |
+| AI polish (experimental) | Off | On / Off, see below |
+| Polish model | Auto | Shown once polish is on. Auto (a fast, inexpensive text model) or any text model you have configured |
+| Vocabulary | Empty | Shown once polish is on. Separated by commas or new lines, up to 60 |
 | Motion | Full | Full / Calm (drops movement and scale, keeps the cross-fades) |
 | Live dictation (experimental) | Off | On / Off, see below |
 
 Naming a fixed recognition language skips the Host's own per-request language detection. Measured faster at most clip lengths, and never slower.
 
 <details>
-<summary>Settings screenshots (v1.5.2, older)</summary>
+<summary>Settings screenshot (v2.5.0)</summary>
 
 <p align="center">
-  <img src="docs/settings-user.png" width="960" alt="Hold to talk settings: mouse and touch hold durations, motion, hover hint and keyboard shortcut">
-</p>
-
-Both screenshots are from v1.5.2. The description text in them was wrong at the time, the plugin name and icon are the old ones, and neither shows the v2.1.0 live-dictation toggle or the v2.2.0 recognition-language row. The table above is current.
-
-<p align="center">
-  <img src="docs/settings-user-2.png" width="960" alt="Another Hold to talk settings screenshot showing all settings and component status">
+  <img src="docs/settings.en.png" width="720" alt="Hold to talk v2.5.0 settings: hold durations, longest recording, motion, hover hint, recognition language, live dictation, AI polish, polish model, vocabulary, keyboard shortcut and About">
 </p>
 
 </details>
@@ -122,6 +130,10 @@ Both screenshots are from v1.5.2. The description text in them was wrong at the 
 ## Live dictation (experimental)
 
 Enabled, this calls the official local speech module while you record and writes results into the draft as they arrive. Releasing finalizes the whole recording.
+
+<p align="center">
+  <img src="docs/live-preview.en.gif" width="960" alt="Live dictation: hold the composer and talk, words appear in the draft as you speak, and releasing settles the text from the whole recording">
+</p>
 
 It behaves in two phases:
 
@@ -143,11 +155,15 @@ Off by default; output quality is still being tuned. When on, a finished transcr
 - Fixes misheard words and terms (根木鹿 → 根目录, 脱肯 → Token), adds punctuation and CJK–Latin spacing
 - Turns an explicit spoken enumeration (“three things: first… second…”) into a `1. 2. 3.` list; plain narration is left alone
 
+<p align="center">
+  <img src="docs/polish.en.png" width="960" alt="The same sentence twice: with polish off it is inserted as spoken, fillers and all; with polish on the fillers are gone, punctuation is added and the vocabulary entry spells DeepSeek Harness">
+</p>
+
 For misheard technical words, fill in **Vocabulary** (shown once polish is on): terms, project names and people you often say, e.g. `Claude Code, DSH, Kubernetes`. Polish uses your spelling when it hears something close, and never inserts a term you did not say. Lists are laid out by code from spoken ordinals (第一 / 首先 / 一是 / first); a reply that changes too much is refused and the original is inserted.
 
 It does not rewrite, translate or answer what you said, and it **never sends** the message. It picks a light model automatically (names with Flash / Mini / Lite first) and turns reasoning off. The text goes to that model's provider, so leave it off if that matters to you.
 
-Any failure — no model, more than 15 s, an empty reply — inserts the original words and says so. Esc cancels polishing like it cancels transcription. The polish step runs on the Host through the official `@deepseek-ai/dsh-llm`; without it the plugin still works and always inserts the original.
+Any failure — no model, more than 15 s, an empty reply — inserts the original words and says so. The 15 s covers the whole cleanup: a model that fails quickly is retried once on the next one, but a model that timed out is not followed by a second wait. Esc cancels polishing like it cancels transcription. The polish step runs on the Host through the official `@deepseek-ai/dsh-llm`; without it the plugin still works and always inserts the original.
 
 The prompt draws on the polish rules of [dsh-better-input](https://github.com/DIAG5/dsh-better-input) (MIT).
 
@@ -187,6 +203,8 @@ If you still have the v1.x package `@jryang1997/dsh-composer-dictation`, remove 
 ## Before you dictate
 
 Recognition uses the speech service selected in Harness. The official default is local SenseVoice, and audio stays on this machine. If you configure a cloud provider, recordings are sent to that provider.
+
+The recording at the top is a real screen capture. The other screenshots and animations are the plugin's own components rendered in a headless browser: the composer around them is rebuilt from DSH's own stylesheets, the microphone is synthetic audio, and the transcripts and polish results are sample text.
 
 Community plugin, unaffiliated with DeepSeek. Tested with DeepSeek Harness `0.2.0-rc.2`.
 
