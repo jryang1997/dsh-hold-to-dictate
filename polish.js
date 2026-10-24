@@ -16,6 +16,11 @@ export const MAX_TRANSCRIPT_CHARS = 4000;
 export const MAX_OUTPUT_FACTOR = 2;
 /** The cleanup attempts' budget, retry included; model discovery happens before it. */
 export const POLISH_TIMEOUT_MS = 15000;
+/**
+ * Settings capability query, on both sides. `client.js` cannot import this module, so it
+ * repeats the number; `tests/polish.test.mjs` fails when the two copies differ.
+ */
+export const REASONING_PROBE_MS = 5000;
 /** A retry only starts when at least this much of the budget is left. */
 export const MIN_RETRY_MS = 3000;
 
@@ -491,7 +496,7 @@ export function createPolishService(protocol, llmModule) {
 		/** Resolve only the selected route, including the effective automatic fallback. */
 		async reasoning(model, signal) {
 			const timeout = new AbortController();
-			const timer = setTimeout(() => timeout.abort(new Error('polish/reasoning-unavailable')), 5000);
+			const timer = setTimeout(() => timeout.abort(new Error('polish/reasoning-unavailable')), REASONING_PROBE_MS);
 			const forward = () => timeout.abort(signal.reason);
 			if (signal?.aborted) forward();
 			else signal?.addEventListener('abort', forward, { once: true });

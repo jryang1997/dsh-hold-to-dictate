@@ -30,6 +30,11 @@ window.__ModuleLoader__.load({
 		 * live value comes from settings; this is only the stylesheet's fallback.
 		 */
 		const HOLD_MS = 300;
+		/**
+		 * Settings capability query. Must equal `REASONING_PROBE_MS` in polish.js; this file
+		 * cannot import that module, and the polish test checks the two copies.
+		 */
+		const REASONING_PROBE_MS = 5000;
 		/** Movement beyond this disarms the gesture: it was a click, a caret move or a selection. */
 		const ARM_TOLERANCE_PX = 10;
 		/** A finger is not a mouse: it rolls, and it never stays within ten pixels. */
@@ -494,7 +499,7 @@ window.__ModuleLoader__.load({
 				if (live) receive(null);
 				live = false;
 				abort.abort();
-			}, 5000);
+			}, REASONING_PROBE_MS);
 			Promise.resolve().then(() => {
 				if (!live) return null;
 				return service.reasoning(model, abort.signal);

@@ -3,6 +3,8 @@
 任务和规格存放在 jryang1997/dsh-hold-to-dictate 的 GitHub Issues。
 在仓库目录使用 gh CLI；仓库由 git remote 自动确定。
 
+某个已发布版本没有对应 Issue 时，规格是 CHANGELOG.md 里该版本段，不是「没有规格」。
+
 - 创建：gh issue create --title "..." --body-file <文件>
 - 阅读：gh issue view <编号> --comments
 - 列表：gh issue list --state open --json number,title,body,labels

@@ -26,18 +26,17 @@ const referenced = [...new Set([...`${read('README.md')}\n${read('README.en.md')
 	.map((match) => match[1])
 	.filter((path) => !/^[a-z]+:/i.test(path)))];
 
-const packed = new Set(
-	JSON.parse(execFileSync('npm pack --dry-run --json', {
-		encoding: 'utf8',
-		// npm is a .cmd shim on Windows and a shell script elsewhere; without a shell Node
-		// cannot spawn it on the former. The command is a fixed literal with nothing
-		// interpolated, so the shell never sees anything this file did not write itself.
-		shell: true,
-		stdio: ['ignore', 'pipe', 'ignore'],
-	}))[0]
-		.files
-		.map((file) => file.path.replace(/\\/g, '/')),
-);
+const packedFiles = JSON.parse(execFileSync('npm pack --dry-run --json', {
+	encoding: 'utf8',
+	// npm is a .cmd shim on Windows and a shell script elsewhere; without a shell Node
+	// cannot spawn it on the former. The command is a fixed literal with nothing
+	// interpolated, so the shell never sees anything this file did not write itself.
+	shell: true,
+	stdio: ['ignore', 'pipe', 'ignore'],
+}))[0]
+	.files
+	.map((file) => ({ path: file.path.replace(/\\/g, '/'), size: file.size }));
+const packed = new Set(packedFiles.map((file) => file.path));
 
 const missing = referenced.filter((path) => !packed.has(path));
 assert.deepEqual(missing, [], `README references files that the package does not ship: ${missing.join(', ')}`);
@@ -48,6 +47,13 @@ for (const entry of manifest.files ?? []) {
 }
 
 assert.ok(packed.has('client.js') && packed.has('index.js'), 'both halves of the bundle are in the tarball');
+{
+	// README shows the mark at 128px. The 1254px export was about 1 MB and shipped anyway,
+	// because this test checked presence and not size.
+	const icon = packedFiles.find((file) => file.path === 'icon.png');
+	assert.ok(icon, 'icon.png must ship');
+	assert.ok(icon.size <= 64 * 1024, `icon.png is ${icon.size} bytes; a plugin icon stays under 64 KB`);
+}
 for (const leaked of ['tests/', '.github/', '.git/']) {
 	assert.ok(![...packed].some((path) => path.startsWith(leaked)), `${leaked} must stay out of the published tarball`);
 }

@@ -7,6 +7,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- The plugin icon is a 256px PNG. The previous 1254px export was about 1 MB inside the package; the READMEs still show it at 128px.
+
 ## [2.6.0] - 2026-10-20
 
 ### Added

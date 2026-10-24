@@ -19,6 +19,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { REASONING_PROBE_MS } from '../polish.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 // Expose the pure spring only to this harness, without expanding the plugin API.
@@ -738,7 +739,7 @@ check(inputActions.captured === 1, 'and so does the chord');
 	const dispose = bundle.queryReasoning({ reasoning: (_model, signal) => { querySignal = signal; return pending.promise; } }, '', (value) => published.push(value));
 	const deadline = timeouts.at(-1);
 	await Promise.resolve();
-	check(deadline.ms === 5000, 'capability query has a five-second UI deadline');
+	check(deadline.ms === REASONING_PROBE_MS, 'capability query uses the shared reasoning-probe deadline');
 	deadline.fn();
 	check(querySignal.aborted && published.length === 1 && published[0] === null, 'deadline aborts and clears unavailable capability');
 	pending.resolve({ ok: true, value: capability });

@@ -1,10 +1,21 @@
 // AI polish: route choice, stream collection, output tidying, fallbacks, and the Remote
 // marking done without decorator syntax. Runs against fakes; no DSH Host needed.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
-	POLISH_PROMPT, POLISH_SERVICE, POLISH_NAMESPACE, MAX_TRANSCRIPT_CHARS,
+	POLISH_PROMPT, POLISH_SERVICE, POLISH_NAMESPACE, MAX_TRANSCRIPT_CHARS, REASONING_PROBE_MS,
 	pickRoute, rankRoutes, polishCandidates, failureReason, isOfficial, listRoutes, collectText, tidyOutput, polishText, polishUserText, createPolishService, normalizeReasoning,
 } from '../polish.js';
+
+// The client half cannot import the host module, so the probe deadline is copied.
+// Both call sites must name the constant; a matching literal on only one side stays red.
+{
+	const client = readFileSync(new URL('../client.js', import.meta.url), 'utf8');
+	const host = readFileSync(new URL('../polish.js', import.meta.url), 'utf8');
+	assert.equal(Number(/const REASONING_PROBE_MS = (\d+);/.exec(client)?.[1]), REASONING_PROBE_MS);
+	assert.match(client, /function queryReasoning[\s\S]*?\}, REASONING_PROBE_MS\);/);
+	assert.match(host, /timeout\.abort\(new Error\('polish\/reasoning-unavailable'\)\), REASONING_PROBE_MS\)/);
+}
 
 const route = (model, modelName = model, modalities) => ({ provider: 'p', providerName: 'P', model, modelName, modalities });
 
@@ -411,7 +422,7 @@ const createUserMessage = (message) => ({ role: 'user', ...message });
 	let expire;
 	let bounded;
 	try {
-		globalThis.setTimeout = (callback, ms) => { assert.equal(ms, 5000); expire = callback; return 0; };
+		globalThis.setTimeout = (callback, ms) => { assert.equal(ms, REASONING_PROBE_MS); expire = callback; return 0; };
 		const unavailable = new Service({ llm: { ...llm, listModels: () => new Promise(() => {}) } });
 		bounded = unavailable.reasoning('');
 	} finally {
