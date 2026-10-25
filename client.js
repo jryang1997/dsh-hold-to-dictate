@@ -2108,6 +2108,181 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 		//#endregion
 
 
+		//#region dictation bridge
+
+		/**
+		 * Cross-plugin dictation state.
+		 *
+		 * `dsh-ascii-whales` gathers its whales above the composer while this plugin records, and
+		 * ripples the water with the microphone level. The two are separate client bundles, so the
+		 * only thing they share is the Host's cordis context: this is the producer half of that
+		 * handshake (docs/adr/0006-dictation-service.md in this repository).
+		 *
+		 * The snapshot is semantic only — phase, flags, a session id and a stable code — never DOM,
+		 * geometry, audio, transcript text or microphone permission. It is frozen and keeps its
+		 * reference between changes, so a consumer can read it with `useSyncExternalStore`. `level()`
+		 * is a pull rather than a notification: a consumer reads it per frame and the producer never
+		 * renders for it.
+		 */
+		const DICTATION_SERVICE = 'dictation';
+		const DICTATION_SCHEMA = 1;
+		const DICTATION_EVENT = 'dsh:dictation';
+		const DICTATION_REQUEST = 'dsh:dictation:request';
+		const DICTATION_PHASES = new Set(['idle', 'listening', 'recording', 'processing', 'done', 'error']);
+		/** The unmounted composer: what the service starts on and returns to when it unloads. */
+		const DICTATION_IDLE = Object.freeze({
+			schema: DICTATION_SCHEMA,
+			seq: 0,
+			phase: 'idle',
+			// 0 means no phase has started yet; the first real change stamps a clock.
+			since: 0,
+			sessionId: null,
+			locked: false,
+			cancelArmed: false,
+			polishing: false,
+			pending: false,
+			code: null,
+		});
+
+		/**
+		 * The degraded channel: a page script can hear the same snapshots, and ask for one, without
+		 * a cordis context. The service is the main channel; this exists for a consumer that could
+		 * not inject it.
+		 */
+		function emitDictation(snapshot) {
+			if (typeof document === 'undefined' || typeof document.dispatchEvent !== 'function') return;
+			if (typeof CustomEvent !== 'function') return;
+			document.dispatchEvent(new CustomEvent(DICTATION_EVENT, { detail: snapshot }));
+		}
+
+		/**
+		 * The service's store, shaped like the `locale` / `jobs.state` services the Host already
+		 * publishes: `getSnapshot()` feeds `useSyncExternalStore`, `subscribe()` reports transitions,
+		 * and the pull `level()` carries the microphone amplitude. `update()` drops a write that
+		 * changes nothing, so `seq` counts real transitions and the snapshot keeps its reference
+		 * between them.
+		 */
+		function createDictationBridge() {
+			let snapshot = DICTATION_IDLE;
+			let seq = 0;
+			let readLevel = null;
+			const listeners = new Set();
+
+			const publish = (next) => {
+				snapshot = Object.freeze(next);
+				for (const listener of [...listeners]) {
+					try {
+						listener(snapshot);
+					} catch (error) {
+						// A consumer's bug must never take the composer down with it.
+						console.warn('dsh-hold-to-dictate: dictation listener failed', error);
+					}
+				}
+				emitDictation(snapshot);
+				return snapshot;
+			};
+
+			const update = (fields) => {
+				const phase = DICTATION_PHASES.has(fields.phase) ? fields.phase : snapshot.phase;
+				const next = {
+					schema: DICTATION_SCHEMA,
+					seq: seq + 1,
+					phase,
+					// A phase starts now; a flag-only change belongs to the phase already running.
+					since: phase === snapshot.phase ? snapshot.since : Date.now(),
+					sessionId: typeof fields.sessionId === 'string' ? fields.sessionId : null,
+					locked: fields.locked === true,
+					cancelArmed: fields.cancelArmed === true,
+					polishing: fields.polishing === true,
+					pending: fields.pending === true,
+					code: typeof fields.code === 'string' ? fields.code : null,
+				};
+				const changed = next.phase !== snapshot.phase
+					|| next.sessionId !== snapshot.sessionId
+					|| next.locked !== snapshot.locked
+					|| next.cancelArmed !== snapshot.cancelArmed
+					|| next.polishing !== snapshot.polishing
+					|| next.pending !== snapshot.pending
+					|| next.code !== snapshot.code;
+				if (!changed) return snapshot;
+				seq = next.seq;
+				return publish(next);
+			};
+
+			return {
+				schema: DICTATION_SCHEMA,
+				getSnapshot: () => snapshot,
+				subscribe(listener) {
+					if (typeof listener !== 'function') return () => false;
+					listeners.add(listener);
+					let subscribed = true;
+					return () => {
+						if (!subscribed) return false;
+						subscribed = false;
+						return listeners.delete(listener);
+					};
+				},
+				level() {
+					if (snapshot.phase !== 'recording' || readLevel === null) return 0;
+					try {
+						const level = readLevel();
+						// Raw and unclamped: the consumer applies its own gain and clamp.
+						return typeof level === 'number' && Number.isFinite(level) ? level : 0;
+					} catch (error) {
+						// A disposed analyser must not throw into the consumer's frame loop.
+						return 0;
+					}
+				},
+				update,
+				bindLevel(reader) {
+					readLevel = typeof reader === 'function' ? reader : null;
+				},
+				idle() {
+					return update({ phase: 'idle', sessionId: null });
+				},
+				/** Re-send the current snapshot to a late listener on the degraded channel. */
+				announce() {
+					emitDictation(snapshot);
+				},
+				dispose() {
+					listeners.clear();
+					readLevel = null;
+				},
+			};
+		}
+
+		/** The plugin's one bridge: the component writes to it and `apply()` publishes it. */
+		const dictation = createDictationBridge();
+		/** Only the first foreign implementation is worth a log line. */
+		let warnedForeignDictation = false;
+
+		/**
+		 * Map the composer's own view onto the published contract.
+		 *
+		 * A recording phase outranks the press ring: `begin()` shows `recording` and only then retracts
+		 * the ring over 140 ms, so reading the ring first would report a live recording as still
+		 * listening. The ring owns only the arming window before the microphone opens.
+		 */
+		function dictationFields(view, sessionId) {
+			const pending = typeof view.pending === 'string' && view.pending !== '';
+			const session = typeof sessionId === 'string' && sessionId !== '' ? sessionId : null;
+			if (view.phase === 'recording') {
+				return {
+					phase: 'recording', sessionId: session, locked: view.locked === true,
+					cancelArmed: view.cancelled === true, pending,
+				};
+			}
+			if (view.phase === 'transcribing') return { phase: 'processing', sessionId: session, polishing: view.polishing === true, pending };
+			if (view.phase === 'complete') return { phase: 'done', sessionId: session, pending };
+			if (view.phase === 'notice') return { phase: 'idle', code: typeof view.code === 'string' ? view.code : null, pending };
+			if (view.phase === 'failed') return { phase: 'error', sessionId: session, code: typeof view.code === 'string' ? view.code : null, pending };
+			if (view.arm !== null && view.arm !== undefined) return { phase: 'listening', sessionId: session, pending };
+			return { phase: 'idle', pending };
+		}
+
+		//#endregion
+
+
 		//#region component
 
 		/** Replace only this recording's plain-text range, guarded by the Host revision. */
@@ -2177,7 +2352,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 		const IDLE = {
 			phase: 'idle', notice: '', tone: 'info', leaving: false, cancelled: false, pending: '', polishing: false,
 			pendingLeaving: false, bubbleLeaving: false, arm: null, armLeaving: false, retryable: false, elapsed: 0,
-			locked: false,
+			locked: false, code: null,
 		};
 		/** Completion remains visible briefly, but never blocks another recording. */
 		const BUBBLE_PHASES = new Set(['recording', 'transcribing', 'complete']);
@@ -2314,6 +2489,10 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					samples: [],
 				};
 
+				// The bridge reads the same RMS the meter draws from; it is a pull, so a consumer's
+				// frame loop never costs the composer a render.
+				dictation.bindLevel(() => state.take.capture?.level() ?? 0);
+
 				const say = (key, params) => translate(latest.current.props, key, params);
 
 				const clearTimeoutOf = (key) => {
@@ -2354,6 +2533,10 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					// Hands-free is a recording state too; leaving the phase ends it the same way.
 					if (patchValues.phase !== undefined && patchValues.locked === undefined) {
 						patchValues = { ...patchValues, locked: false };
+					}
+					// A stable code belongs to the notice or failure on screen, never to the phase after it.
+					if (patchValues.phase !== undefined && patchValues.code === undefined) {
+						patchValues = { ...patchValues, code: null };
 					}
 					if (patchValues.phase !== undefined) {
 						// A phase change replaces the previous notice's timers.
@@ -2418,15 +2601,15 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 
 				const failure = (error) => {
 					const name = error instanceof Error ? error.name : '';
-					if (name === 'NotAllowedError' || name === 'SecurityError') return say('permission');
-					if (name === 'NotFoundError' || name === 'NotReadableError') return say('unavailable');
+					if (name === 'NotAllowedError' || name === 'SecurityError') return { notice: say('permission'), code: 'permission' };
+					if (name === 'NotFoundError' || name === 'NotReadableError') return { notice: say('unavailable'), code: 'unavailable' };
 					return failureNotice(error instanceof Error ? error.message : String(error));
 				};
 
 				/** Turn a Host-side recognition error into a line the user can act on. */
 				const failureNotice = (message) => {
-					if (/prepare/i.test(message)) return say('notReady');
-					return say('failed', { message });
+					if (/prepare/i.test(message)) return { notice: say('notReady'), code: 'not-ready' };
+					return { notice: say('failed', { message }), code: 'recognition-failed' };
 				};
 
 				/**
@@ -2435,13 +2618,15 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 				 * A notice is for something that has already resolved itself. A failure is
 				 * something the user may want to act on, so it stays until it is dismissed or
 				 * retried. `retry` carries what trying again needs — currently the encoded audio,
-				 * when the failure happened after it was already captured.
+				 * when the failure happened after it was already captured. `code` is the stable reason
+				 * a cross-plugin consumer reads; the line on screen stays localized.
 				 */
-				const fail = (message, retry) => {
+				const fail = (message, retry, code) => {
 					state.retry = retry ?? null;
 					show({
 						phase: 'failed',
 						notice: message,
+						code: code ?? null,
 						tone: 'error',
 						retryable: retry !== undefined && retry !== null,
 						cancelled: false,
@@ -2582,7 +2767,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					state.abort = null;
 					if (capture !== null) capture.dispose();
 					if (silent) show({ phase: 'idle', notice: '', cancelled: false });
-					else show({ phase: 'notice', notice: say(rolledBack ? 'cancelled' : 'cancelledEdited'), tone: 'muted', cancelled: false });
+					else show({ phase: 'notice', notice: say(rolledBack ? 'cancelled' : 'cancelledEdited'), code: rolledBack ? 'cancelled' : 'cancelled-edited', tone: 'muted', cancelled: false });
 				};
 
 				/**
@@ -2732,7 +2917,8 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						state.starting = null;
 						state.active = false;
 						state.busy = false;
-						fail(failure(error), null);
+						const failed = failure(error);
+						fail(failed.notice, null, failed.code);
 					}
 				}
 
@@ -2827,13 +3013,13 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 							// Saying nothing is the one outcome that used to be silent, and a
 							// keyboard chord makes it easy to hit by accident.
 							state.busy = false;
-							show({ phase: 'notice', notice: say('tooShort'), tone: 'muted', cancelled: false });
+							show({ phase: 'notice', notice: say('tooShort'), code: 'too-short', tone: 'muted', cancelled: false });
 							return;
 						}
 						const limitBytes = maxBytes();
 						if (audio.buffer.byteLength > limitBytes) {
 							state.busy = false;
-							fail(say('tooLarge'), null);
+							fail(say('tooLarge'), null, 'too-large');
 							return;
 						}
 						await transmit(audio, span, run, liveDraft);
@@ -2842,7 +3028,8 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						// and clearing it here would break Esc for that run.
 						if (run !== state.run) return;
 						state.busy = false;
-						fail(failure(error), null);
+						const failed = failure(error);
+						fail(failed.notice, null, failed.code);
 					} finally {
 						capture.dispose();
 					}
@@ -2860,7 +3047,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					const transcribe = resolveTranscribe(latest.current.props);
 					if (typeof transcribe !== 'function') {
 						state.busy = false;
-						fail(say('unavailable'), null);
+						fail(say('unavailable'), null, 'unavailable');
 						return;
 					}
 					show({ phase: 'transcribing', notice: '', cancelled: false });
@@ -2875,14 +3062,15 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						if (run !== state.run) return;
 						state.busy = false;
 						if (result === undefined || result.ok !== true) {
-							fail(failureNotice(result?.error?.message ?? ''), { audio, span, liveDraft });
+							const failed = failureNotice(result?.error?.message ?? '');
+							fail(failed.notice, { audio, span, liveDraft }, failed.code);
 							return;
 						}
 						const transcript = result.value?.text ?? '';
 						if (transcript === '') {
 							liveDraft?.rollback();
 							state.retry = null;
-							show({ phase: 'notice', notice: say('empty'), tone: 'info', cancelled: false });
+							show({ phase: 'notice', notice: say('empty'), code: 'empty', tone: 'info', cancelled: false });
 							return;
 						}
 						// Optional cleanup. It runs inside the same take: Esc or a new press aborts
@@ -2919,12 +3107,13 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 							return;
 						}
 						state.retry = null;
-						if (polishMissed !== '') show({ phase: 'notice', notice: say('polishFailed', { reason: say(polishReasonKey(polishMissed)) }), tone: 'info', cancelled: false });
+						if (polishMissed !== '') show({ phase: 'notice', notice: say('polishFailed', { reason: say(polishReasonKey(polishMissed)) }), code: 'polish-failed', tone: 'info', cancelled: false });
 						else show({ phase: 'complete', notice: '', cancelled: false });
 					} catch (error) {
 						if (run !== state.run) return;
 						state.busy = false;
-						fail(failure(error), { audio, span, liveDraft });
+						const failed = failure(error);
+						fail(failed.notice, { audio, span, liveDraft }, failed.code);
 					}
 				}
 
@@ -2945,7 +3134,7 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						dropPending();
 						return;
 					}
-					show({ phase: 'notice', notice: say('conflict'), tone: 'info' });
+					show({ phase: 'notice', notice: say('conflict'), code: 'conflict', tone: 'info' });
 				};
 
 				function onPointerDown(event) {
@@ -3214,8 +3403,19 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					state.run += 1;
 					if (state.abort !== null) state.abort.abort();
 					if (state.take.capture !== null) state.take.capture.dispose();
+					dictation.bindLevel(null);
+					dictation.idle();
 				};
 			}, []);
+
+			/*
+			 * Publish every view change to the cross-plugin bridge. An effect rather than the
+			 * `show`/`patch` calls themselves: those live in the setup closure, while `view` is the
+			 * state all of them converge on.
+			 */
+			React.useEffect(() => {
+				dictation.update(dictationFields(view, props.sessionId));
+			}, [view, props.sessionId]);
 
 			// Derived render state. `pending` survives notices so a rejected transcript is
 			// never lost; the chip is the only affordance that can still insert it.
@@ -3460,6 +3660,40 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 
 		function apply(ctx) {
 			ctx.effect(() => ctx.locale.register(NS, { zh, en }));
+			/*
+			 * Cross-plugin dictation state, provided unconditionally and before any other
+			 * injection: a consumer's child fiber parks on this when speech is unavailable, rather
+			 * than the other way round. A future native implementation wins the name — `ctx.get` is
+			 * the guard, and a duplicate `provide` would throw.
+			 */
+			ctx.effect(() => {
+				// A unit-test stub context has no service registry; there is nothing to provide into.
+				if (typeof ctx.provide !== 'function' || typeof ctx.get !== 'function') return undefined;
+				if (ctx.get(DICTATION_SERVICE) !== undefined) {
+					if (!warnedForeignDictation) {
+						warnedForeignDictation = true;
+						console.warn('dsh-hold-to-dictate: another "dictation" service is already registered; the DOM event carries the state');
+					}
+					return undefined;
+				}
+				const provided = ctx.provide(DICTATION_SERVICE, {
+					schema: DICTATION_SCHEMA,
+					getSnapshot: dictation.getSnapshot,
+					subscribe: dictation.subscribe,
+					level: dictation.level,
+				});
+				// The degraded request channel: a consumer without cordis asks for the current
+				// snapshot, and the producer answers with the one it has.
+				const answer = () => dictation.announce();
+				document.addEventListener(DICTATION_REQUEST, answer);
+				return () => {
+					document.removeEventListener(DICTATION_REQUEST, answer);
+					// A consumer must never be left holding a recording that ended with this plugin.
+					dictation.idle();
+					dictation.dispose();
+					if (typeof provided === 'function') provided();
+				};
+			});
 			/*
 			 * The bundle's own page in Settings → Plugins. The manager keys it by package name —
 			 * that is what it passes down as `entryKey` — and shows it between the bundle's
