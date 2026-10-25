@@ -1,14 +1,14 @@
-<!-- 草稿：未发布。发布前由维护者审阅。 -->
+<!-- 草稿：未发布。2026-10-25 经归藏 Humanizer-zh（op7418/Humanizer-zh）过稿一遍。发布前由维护者审阅。 -->
 
 # 给没有稳定扩展 API 的宿主应用写输入框插件
 
-DeepSeek Harness（下文称 DSH）是一个桌面端 AI 编程宿主：你在它的输入框里对 agent 讲话。dsh-hold-to-dictate 是我为它写的社区插件——按住输入框说话，松开后转写文字落进草稿，从不自动发送。DSH 有插件系统，但输入框内部没有一份稳定的扩展 API，能用的全是内部接口，版本之间会动。这篇文章记录把插件挂进宿主输入框的过程中学到的四件事；所有结论都对照 DSH `0.2.0-rc.2` 核过：一边读发布包 `app.asar` 里的代码，一边看运行时真实的 slot 树。它不是功能介绍，是一份逆向宿主应用、并在宿主内部结构变动时优雅退化的实地记录。
+DeepSeek Harness（下文称 DSH）是一个桌面端 AI 编程宿主：你在它的输入框里对 agent 讲话。dsh-hold-to-dictate 是我为它写的社区插件——按住输入框说话，松开后转写文字落进草稿，从不自动发送。DSH 有插件系统，但输入框内部没有一份稳定的扩展 API，能用的全是内部接口，版本之间会动。把插件挂进输入框的过程里学到四件事，逐件记录在下面；所有结论都对照 DSH `0.2.0-rc.2` 核过：一边读发布包 `app.asar` 里的代码，一边看运行时真实的 slot 树。
 
 ## 一、对内部接口断言行为，而不是断言位置
 
-读宿主的发布包，很快会攒出一份地址清单：`inputActions` 在 `dsh-client-ui-conversation/lib/client.js:13462-13485`，卡片容器 `data-composer-card` 在同一文件 17444 行，语音服务在 `dsh-experimental-client-ui-voice-input/lib/client.js:5818`。这份清单只对一个版本有效。行号是那个版本出厂时的坐标，不是稳定地址——这些行号在 `0.1.7-rc.2` 到 `0.2.0-rc.2` 之间就整体移动过一次。运行时若按行号或 DOM 下标去够这些接口，一次宿主更新就够空了。
+读宿主的发布包，很快会攒出一份地址清单：`inputActions` 在 `dsh-client-ui-conversation/lib/client.js:13462-13485`，卡片容器 `data-composer-card` 在同一文件 17444 行，语音服务在 `dsh-experimental-client-ui-voice-input/lib/client.js:5818`。这份清单只对一个版本有效。行号是那个版本出厂时的坐标，不是稳定地址——这些行号在 `0.1.7-rc.2` 到 `0.2.0-rc.2` 之间就整体移动过一次。要是代码按行号或 DOM 下标去够这些接口，一次宿主更新就够空了。
 
-所以检查一律写成行为断言。插件不从全局猜位置，而是从自己被渲染的节点往上走到 `div[data-composer-card]`；编辑器按属性认：Lexical 编辑器，`div[data-composer-input]`，带 `contenteditable` 与 `role=textbox`；插槽的存在和类型在运行时的 slot 树里当场验证。file:line 写进设计文档给人看，帮后来者快速定位；代码只信当场观察到的行为。
+所以检查一律写成行为断言。插件不从全局猜位置，而是从自己被渲染的节点往上走到 `div[data-composer-card]`；编辑器按属性认：`div[data-composer-input]`，带 `contenteditable` 和 `role=textbox` 的那个 Lexical 框；插槽的存在和类型在运行时的 slot 树里当场验证。file:line 写进设计文档给人看，帮后来者快速定位；代码只信当场观察到的行为。
 
 ## 二、选一个不与宿主争座位的 slot
 
@@ -27,7 +27,7 @@ div[data-composer-card]                     ← position: relative
           └ 插件自己的层
 ```
 
-锚点 `overlayAnchor` 的高度是 0、绝对定位、`inset: 0 0 auto`——它不是盖住卡片的画布，而是贴在卡片上缘的一个定位上下文。在它里面写 `inset: 0`，会塌缩成看不见的一条线；宿主自己的用法（`dsh-client-ui-input-trigger` 里的 MenuView）是 `bottom: calc(100% + 4px); left: 0; right: 0`，让菜单浮到卡片上方。插件沿用同一套几何：录音胶囊以 `bottom: calc(100% + 10px)` 悬浮在卡片上方居中，和 slash-menu 用同一个套路。
+锚点 `overlayAnchor` 的高度是 0、绝对定位、`inset: 0 0 auto`——它不是盖住卡片的画布，而是贴在卡片上缘的一个定位上下文。在它里面写 `inset: 0`，会塌缩成看不见的一条线；宿主自己的用法（`dsh-client-ui-input-trigger` 里的 MenuView）是 `bottom: calc(100% + 4px); left: 0; right: 0`，让菜单浮到卡片上方。插件沿用同一套几何：录音胶囊以 `bottom: calc(100% + 10px)` 悬浮在卡片上方居中。
 
 留在卡片内部的那层要另想办法。锚点零高，层必须自己有高度，组件用 `ResizeObserver` 量卡片，不猜。这层也刻意不盖住任何东西：早期版本曾把整个输入框填成录音面板，两个后果立刻显形——录音期间草稿消失了，恰恰是用户可能还想看一眼的时候；退场动画播放时，那块正在淡出的透明面板变成盖在编辑器上的隐形点击盾。现在的层只在卡片外缘画轮廓，指针纪律是硬性的：层本身 `pointer-events: none`；对卡片的监听走捕获阶段，按住阈值达到之前不 `preventDefault` 任何事件，单击、移动光标、框选都和没装插件时一样；指针移动超过 10 px 就解除手势。悬浮在卡片上方的一切，不接任何指针事件。
 

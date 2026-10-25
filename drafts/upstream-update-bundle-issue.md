@@ -1,4 +1,5 @@
-<!-- 草稿：未发布。这是准备提交到 github.com/deepseek-ai/deepseek-harness 的 issue 文本，发布需维护者明确授权。 -->
+<!-- 已于 2026-10-25 提交到上游。上游仓库关闭了 Issues，实际发在 Discussions 的 Ideas 分类：
+     https://github.com/deepseek-ai/deepseek-harness/discussions/10923 -->
 
 # plugin_manager 增加 `update_bundle` action 的建议
 
