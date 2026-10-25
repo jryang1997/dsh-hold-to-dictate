@@ -7,6 +7,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Cross-plugin dictation state.** A client service named `dictation` (schema 1) publishes
+  what the composer is doing — `idle`, `listening`, `recording`, `processing`, `done`,
+  `error` — plus the take's session, hands-free/cancel/polish/pending flags and a stable
+  `code`, so another installed plugin can decorate the recording without reading this
+  plugin's DOM. The snapshot carries no transcript text, audio, microphone permission or
+  composer geometry; the microphone level is a per-frame `level()` pull that is only
+  nonzero while recording. A `dsh:dictation` DOM event and a `dsh:dictation:request`
+  handshake cover consumers that cannot inject the service. The service is provided
+  unconditionally from `apply`, guarded against a foreign implementation, and publishes a
+  final `idle` snapshot when the plugin unloads. Contract and trade-offs:
+  `docs/adr/0006-dictation-service.md`.
+
 ## [2.7.0] - 2026-10-25
 
 ### Added
