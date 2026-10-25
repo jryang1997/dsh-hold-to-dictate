@@ -63,7 +63,7 @@ window.__ModuleLoader__.load({
 		/** Kept below the Host default (120 s) so the Host never rejects on duration. */
 		const MAX_SECONDS = 110;
 		/** This build's version; tests/package.test.mjs keeps it equal to package.json. */
-		const VERSION = '2.7.0';
+		const VERSION = '2.8.0';
 		const REPO_URL = 'https://github.com/jryang1997/dsh-hold-to-dictate';
 		const LATEST_RELEASE_API = 'https://api.github.com/repos/jryang1997/dsh-hold-to-dictate/releases/latest';
 		/** Kept below the Host default (4 MiB) so the Host never rejects on size. */
