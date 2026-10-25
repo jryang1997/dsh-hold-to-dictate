@@ -208,6 +208,8 @@ Remind me to reload the page. Keep the official voice-input module installed.
 
 Reload the page afterwards. Your settings are preserved.
 
+The two steps cannot be expressed as one instruction; an atomic `update_bundle` action has been proposed upstream ([deepseek-harness discussion #10923](https://github.com/deepseek-ai/deepseek-harness/discussions/10923)). If it lands, this section shrinks to a single line.
+
 If you still have the v1.x package `@jryang1997/dsh-composer-dictation`, remove it first and then install the package above, so both plugins are never active at once. To uninstall, remove `@jryang1997/dsh-hold-to-dictate`.
 
 ## Before you dictate

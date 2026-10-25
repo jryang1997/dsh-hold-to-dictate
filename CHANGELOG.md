@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-10-25
+
 ### Added
 
 - **Project glossary.** With polish on, terms are read from the current workspace's
@@ -20,6 +22,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - The plugin icon is a 256px PNG. The previous 1254px export was about 1 MB inside the package; the READMEs still show it at 128px.
+- The READMEs' update sections link the upstream proposal for an atomic `update_bundle` action
+  ([discussion #10923](https://github.com/deepseek-ai/deepseek-harness/discussions/10923)).
 
 ## [2.6.0] - 2026-10-20
 

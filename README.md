@@ -207,6 +207,8 @@ target: github:jryang1997/dsh-hold-to-dictate 安装，并提示我刷新页面�
 
 装完刷新页面。本机设置会保留。
 
+这两步没法并成一条指令，已经向上游提了原子 `update_bundle` 的建议（[deepseek-harness 讨论 #10923](https://github.com/deepseek-ai/deepseek-harness/discussions/10923)），采纳后本节可以缩成一行。
+
 如果仍安装的是 v1.x 的旧包 `@jryang1997/dsh-composer-dictation`，先移除它再装上面的新包，避免同时启用两份插件。只需卸载时，移除 `@jryang1997/dsh-hold-to-dictate` 即可。
 
 ## 需要知道
