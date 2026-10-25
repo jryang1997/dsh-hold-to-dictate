@@ -61,8 +61,9 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node tests/locales.test.mjs && node tests/render.test.mjs && node tests/dictation-bridge.test.mjs && node tests/plan.test.mjs && node tests/live.test.mjs && node tests/polish.test.mjs && node tests/glossary.test.mjs && node tests/package.test.mjs",
-    "check": "node --check index.js && node --check polish.js && node --check client.js && npm test"
+    "test": "dsh-plugin-kit test",
+    "check": "dsh-plugin-kit check && dsh-plugin-kit pack",
+    "verify": "dsh-plugin-kit verify"
   },
   "dsh": {
     "bundle": {
@@ -75,5 +76,79 @@
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
+  },
+  "devDependencies": {
+    "@jryang1997/dsh-plugin-kit": "https://codeload.github.com/jryang1997/dsh-plugin-kit/tar.gz/refs/tags/v1.0.0"
+  },
+  "packageManager": "pnpm@11.28.5",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "dshPluginKit": {
+    "version": 1,
+    "dshRulesVersion": "installed-2026-10-23",
+    "tests": {
+      "include": [
+        "*.test.mjs"
+      ],
+      "runner": "auto"
+    },
+    "pack": {
+      "forbid": [
+        "tests/",
+        ".github/",
+        ".node-version",
+        "docs/adr/",
+        "docs/agents/",
+        ".scratch/"
+      ],
+      "require": [
+        "index.js",
+        "client.js",
+        "polish.js",
+        "cordis.patch.yml",
+        "locale/en.json",
+        "locale/zh.json"
+      ]
+    },
+    "icon": {
+      "declaration": "field",
+      "budgetBytes": 65536
+    },
+    "locale": {
+      "required": [
+        "en",
+        "zh"
+      ],
+      "metadata": [
+        "title",
+        "description"
+      ]
+    },
+    "readme": {
+      "files": [
+        "README.md",
+        "README.en.md"
+      ],
+      "parity": [
+        "headings",
+        "figures"
+      ]
+    },
+    "screenshots": {
+      "manifest": "screenshots.json",
+      "strict": false
+    },
+    "versionSites": [
+      {
+        "file": "CHANGELOG.md",
+        "pattern": "## \\[([0-9.]+)\\]",
+        "flags": "m"
+      },
+      {
+        "file": "client.js",
+        "pattern": "const VERSION = '([^']+)'"
+      }
+    ]
   }
 }

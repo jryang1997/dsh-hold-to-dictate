@@ -5,10 +5,11 @@ Thanks for looking. This is a small plugin with no build step, so the loop is sh
 ## The loop
 
 ```bash
-npm run check     # parses both halves, checks the dictionaries, mounts every gesture state
+pnpm install --frozen-lockfile   # links the verification kit; the plugin itself has no runtime dependencies
+pnpm check                       # manifest, locale, README, version and pack checks plus every test
 ```
 
-There is no bundler, no transpiler and no dependencies. `client.js` is the browser half and
+There is no bundler, no transpiler and no runtime dependency. `client.js` is the browser half and
 is loaded verbatim by the DSH module loader, so **what you edit is what runs** — reload the
 page and it is live.
 
@@ -21,9 +22,9 @@ dsh plugin --profile <profile> add <absolute path to your clone>
 Then `Ctrl+R`. The client half is a browser module: it keeps the copy it already loaded until
 the page is refreshed, so a reload is always part of the loop.
 
-## What `npm run check` actually guards
+## What `pnpm verify` actually guards
 
-`node --check` only proves the file parses. [`tests/render.test.mjs`](tests/render.test.mjs)
+`dsh-plugin-kit` (a devDependency pinned to its published tag) checks the package manifest, the locale files, README parity, version sites and syntax, then runs every `tests/*.test.mjs` file. `node --check` only proves the file parses. [`tests/render.test.mjs`](tests/render.test.mjs)
 goes further: it performs the real module-loader handshake, captures the slot component
 through a stubbed `apply`, and mounts it in every state the gesture can be in. It also
 asserts the motion rules, because those are exactly the kind of thing that regresses

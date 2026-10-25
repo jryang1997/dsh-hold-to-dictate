@@ -1,6 +1,5 @@
 # Dependencies and build output
 node_modules/
-pnpm-lock.yaml
 package-lock.json
 yarn.lock
 
@@ -18,3 +17,5 @@ desktop.ini
 # Local scratch
 *.local
 *.tmp
+# Local scratch
+.scratch/

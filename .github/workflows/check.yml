@@ -1,25 +1,39 @@
-name: check
+name: verify
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
+  verify:
+    name: verify (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       # Pinned to commit SHAs rather than version tags: a tag is a name anyone with push
-      # access can move, and this workflow is the only thing standing between a bad edit
-      # and main. The cost of pinning is that these need refreshing by hand — the checkout
-      # pin is on v5 and the setup-node pin on v7, each the newest line still maintained.
+      # access can move. Refresh these by hand when a newer maintained line ships.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
-      # No dependencies and no build step: the plugin is plain JavaScript. This is the same
-      # command CONTRIBUTING.md tells a contributor to run, so the manifest keys and the four
-      # test scripts cannot drift between a green local run and a red CI run. Each script
-      # prints its own result line, which is where a failure names itself.
-      - name: Run the checks
-        run: npm run check
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify committed artifacts and behaviour
+        run: pnpm verify
+      - name: Confirm verification left tracked files unchanged
+        run: git diff --exit-code

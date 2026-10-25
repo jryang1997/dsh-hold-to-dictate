@@ -1,0 +1,25 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    devDependencies:
+      '@jryang1997/dsh-plugin-kit':
+        specifier: https://codeload.github.com/jryang1997/dsh-plugin-kit/tar.gz/refs/tags/v1.0.0
+        version: https://codeload.github.com/jryang1997/dsh-plugin-kit/tar.gz/refs/tags/v1.0.0
+
+packages:
+
+  '@jryang1997/dsh-plugin-kit@https://codeload.github.com/jryang1997/dsh-plugin-kit/tar.gz/refs/tags/v1.0.0':
+    resolution: {integrity: sha512-mxrFBl8hwmRLjScr10Q7X34KvLDJtR7pNwzuP5iItY5yXuTAri/YN+qcqGTYNZvlBiJLMvDwir6yC8Mm8zAMbA==, tarball: https://codeload.github.com/jryang1997/dsh-plugin-kit/tar.gz/refs/tags/v1.0.0}
+    version: 1.0.0
+    engines: {node: '>=20.19'}
+    hasBin: true
+
+snapshots:
+
+  '@jryang1997/dsh-plugin-kit@https://codeload.github.com/jryang1997/dsh-plugin-kit/tar.gz/refs/tags/v1.0.0': {}
