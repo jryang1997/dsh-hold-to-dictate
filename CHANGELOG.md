@@ -7,6 +7,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Project glossary.** With polish on, terms are read from the current workspace's
+  `GLOSSARY.md`, `CONTEXT.md` and `AGENTS.md` — the first table column and bolded list leads,
+  at most 40 terms, cached five minutes per session — and merged behind the manual vocabulary,
+  so dictating project jargon corrects to the repo's own spellings while the user's own terms
+  keep priority. The read goes through the client `workspaceFiles` remote with its own deadline;
+  a host without it, or a workspace without the files, silently changes nothing. Term spellings
+  reach the polish model's provider, so the feature has its own switch (default on).
+
 ### Changed
 
 - The plugin icon is a 256px PNG. The previous 1254px export was about 1 MB inside the package; the READMEs still show it at 128px.

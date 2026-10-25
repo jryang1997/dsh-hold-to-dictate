@@ -8,6 +8,8 @@ Hold the mouse button in the [DeepSeek Harness](https://github.com/deepseek-ai/d
 [![version](https://img.shields.io/github/v/tag/jryang1997/dsh-hold-to-dictate?label=version)](https://github.com/jryang1997/dsh-hold-to-dictate/tags)
 [![license](https://img.shields.io/github/license/jryang1997/dsh-hold-to-dictate)](LICENSE)
 
+> Verified with DeepSeek Harness **0.2.0-rc.2**. Host internals can change between rcs; the plugin asserts behaviour rather than positions and degrades instead of breaking — see the [implementation notes](docs/design.md).
+
 [简体中文](README.md) · **English**
 
 <p align="center">
@@ -114,6 +116,7 @@ Under **Settings → Plugins → Hold to talk**. These settings apply to this ma
 | Polish model | Auto | Shown once polish is on. Auto or any configured text model; selection rules below |
 | Require reasoning off | Off | Shown once polish is on. Can be enabled only when the current model explicitly declares `off`. Every request and retry must use `off`, otherwise the original is kept |
 | Vocabulary | Empty | Shown once polish is on. Separated by commas or new lines, up to 60 |
+| Project glossary | On | Shown once polish is on. Reads terms from the workspace GLOSSARY.md, CONTEXT.md and AGENTS.md and merges them with your vocabulary; the terms go to the polish model's provider |
 | Motion | Full | Full / Calm (drops movement and scale, keeps the cross-fades) |
 | Live dictation (experimental) | Off | On / Off, see below |
 
@@ -161,6 +164,8 @@ Off by default; output quality is still being tuned. When on, a finished transcr
 </p>
 
 For misheard technical words, fill in **Vocabulary** (shown once polish is on): terms, project names and people you often say, e.g. `Claude Code, DSH, Kubernetes`. Polish uses your spelling when it hears something close, and never inserts a term you did not say. Lists are laid out by code from spoken ordinals (第一 / 首先 / 一是 / first); a reply that changes too much is refused and the original is inserted.
+
+**Project glossary** (on by default) adds to this automatically: at polish time it reads the workspace root's `GLOSSARY.md`, `CONTEXT.md` and `AGENTS.md`, takes the first table column and bolded items (at most 40 terms, re-read at most every five minutes) and merges them behind your vocabulary, so your own spelling wins on conflict. Missing files or a failed read change nothing. The term spellings travel to the polish model's provider like the transcript does; switch it off if that matters.
 
 It does not rewrite, translate or answer what you said, and it **never sends** the message. Auto prefers official DeepSeek channels, then favors light text models with names such as Flash / Mini / Lite. It selects the lowest recognized declared reasoning effort in the order `off → none → minimal → low`, or leaves the provider default when none is available. `none` and `minimal` do not prove that thinking can be disabled. The text goes to that model's provider, so leave polish off if that matters to you.
 

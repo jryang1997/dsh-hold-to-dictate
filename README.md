@@ -8,6 +8,8 @@
 [![version](https://img.shields.io/github/v/tag/jryang1997/dsh-hold-to-dictate?label=version)](https://github.com/jryang1997/dsh-hold-to-dictate/tags)
 [![license](https://img.shields.io/github/license/jryang1997/dsh-hold-to-dictate)](LICENSE)
 
+> 已在 DeepSeek Harness **0.2.0-rc.2** 上验证。宿主内部接口在 rc 之间可能变化，插件按行为断言写成、变化时优雅降级，细节见[实现笔记](docs/design.md)。
+
 **简体中文** · [English](README.en.md)
 
 <p align="center">
@@ -113,6 +115,7 @@ dsh plugin --profile <profile> add github:jryang1997/dsh-hold-to-dictate
 | 润色模型 | 自动 | 开启润色后出现。自动或任一已配置的文本模型，选择规则见下文 |
 | 强制关闭思考 | 关 | 开启润色后出现。只有当前模型明确声明 `off` 才能新开启；开启后每次请求和重试都必须使用 `off`，否则保留原文 |
 | 常用词 | 空 | 开启润色后出现。逗号或换行分隔，最多 60 个 |
+| 项目词表 | 开 | 开启润色后出现。自动读取当前工作区 GLOSSARY.md、CONTEXT.md、AGENTS.md 的词条，与常用词合并；词条会随润色请求发给模型服务商 |
 | 动效 | 完整 | 完整 / 精简（去掉位移与缩放，只保留淡入淡出） |
 | 边说边出字（实验） | 关 | 开 / 关，见下节 |
 
@@ -160,6 +163,8 @@ dsh plugin --profile <profile> add github:jryang1997/dsh-hold-to-dictate
 </p>
 
 听错的专业词最好的办法是填「常用词」：把你常说的术语、项目名、人名填进去（如 `Claude Code, DSH, Kubernetes`），润色听到发音相近的词会按你的写法纠正，但不会凭空插入。列表由代码按「第一 / 首先 / 一是 / first」这类序数词排版；模型改动太大时会被拒绝并插入原文。
+
+「项目词表」（默认开）在此基础上自动读当前工作区根目录的 `GLOSSARY.md`、`CONTEXT.md`、`AGENTS.md`：取表格首列与加粗词条，至多 40 条、5 分钟内不重读，排在你的常用词之后参与纠正——同一个词以你的手填写法优先。文件不存在或读取失败时静默跳过，不影响润色。词条写法会像转写文本一样经过润色模型的服务商，在意隐私可以关掉这一项。
 
 它不改写、不翻译、不回答你说的问题，也**不会自动发送**。自动选择优先 DeepSeek 官方渠道，再按模型名称优先选择 Flash / Mini / Lite 等轻量文本模型。默认使用模型声明中最低的已识别推理档位，按 `off → none → minimal → low` 选择；都没有就沿用服务商默认。`none` 和 `minimal` 不等于已确认支持关闭思考。消息会经过该模型的服务商，在意隐私就保持关闭。
 

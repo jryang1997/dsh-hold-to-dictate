@@ -184,6 +184,18 @@ the existing retained-transcript action; retry carries the same owned range to a
 Reference-chip drafts, cloud providers, missing input hooks and unavailable AudioWorklets
 retain one-shot recognition. Native token streaming remains unavailable in the Host API.
 
+## Workspace glossary
+
+Polish can correct project jargon without the user typing it. The overlay slot is scope
+`session`, and a `slots.register` entry's `inject(sessionId)` callback receives that id — the
+idiom `dsh-client-ui-input-trigger` uses for the slash-menu. A separate
+`ctx.inject(['remote.workspaceFiles'])` exposes the Host's `workspaceFiles.read(sessionId, path,
+range)`, the same remote the files sidebar uses, which confines reads to that session's
+workspace root. At polish time the plugin reads the first 120 lines of `GLOSSARY.md`,
+`CONTEXT.md` and `AGENTS.md`, mines the first cell of table rows and bold list leads only, caps
+at 40 terms behind the manual vocabulary, and caches per session for five minutes. A host
+without the namespace, or a workspace without the files, changes nothing.
+
 ## Deliberate non-goals
 
 - No native streaming protocol or third-party recognizer: previews use complete WAV calls.
