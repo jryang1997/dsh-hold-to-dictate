@@ -324,6 +324,7 @@ window.__ModuleLoader__.load({
 			polish: { fallback: false, kind: 'switch' },
 			polishReasoningOff: { fallback: false, kind: 'switch' },
 			vocabulary: { fallback: '', kind: 'text', max: 600 },
+			glossary: { fallback: true, kind: 'switch' },
 			polishModel: { fallback: '', kind: 'text', max: 200 },
 			language: { fallback: 'host', oneOf: Object.keys(LANGUAGE_LABELS), kind: 'choice' },
 		};
@@ -452,7 +453,98 @@ window.__ModuleLoader__.load({
 		//#endregion
 
 		/** Handles captured in `apply`, so a slot entry that receives no injected props still works. */
-		const runtime = { speech: null, limits: null, polish: null };
+		const runtime = { speech: null, limits: null, polish: null, workspaceFiles: null };
+		/** Candidate term files at the workspace root, in priority order. */
+		const GLOSSARY_FILES = ['GLOSSARY.md', 'CONTEXT.md', 'AGENTS.md'];
+		/**
+		 * Leaves room inside the Host's 60-term cap: the user's own vocabulary is merged in
+		 * front of the glossary, so these are the terms that can still fit after it.
+		 */
+		const MAX_GLOSSARY_TERMS = 40;
+		/** Per-file read deadline, so a workspace that never answers cannot stall the polish. */
+		const GLOSSARY_READ_MS = 2000;
+		/** How long a glossary that found terms is cached before the files are read again. */
+		const GLOSSARY_CACHE_MS = 300000;
+		/** Header cells that name a column rather than a term, whatever file they appear in. */
+		const GLOSSARY_HEADER_CELLS = new Set(['term', 'word', 'name', 'key', '术语', '词语', '名词', '名称']);
+		/** Glossary reads that found terms, keyed by session, with the moment they were taken. */
+		const glossaryCache = new Map();
+
+		/**
+		 * Candidate terms from one file's text: the first cell of every markdown table row
+		 * with at least two cells, and list items whose lead is bold. Deliberately nothing
+		 * else — an invented term would actively mis-correct the transcript, so the author
+		 * of the file stays the only one saying what a term is.
+		 */
+		function glossaryTerms(text) {
+			const seen = new Set();
+			const terms = [];
+			const take = (candidate) => {
+				if (terms.length === MAX_GLOSSARY_TERMS) return;
+				const term = String(candidate).replace(/\*\*/g, '').replace(/`/g, '').replace(/\s+/g, ' ').trim();
+				if (term.length === 0 || term.length > 40) return;
+				const key = term.toLowerCase();
+				if (GLOSSARY_HEADER_CELLS.has(key) || seen.has(key)) return;
+				seen.add(key);
+				terms.push(term);
+			};
+			for (const line of String(text ?? '').split(/\r?\n/)) {
+				const trimmed = line.trim();
+				if (trimmed === '') continue;
+				if (trimmed.includes('|')) {
+					// Drop the empties a leading or trailing pipe leaves behind, and require a
+					// second column, so prose carrying one pipe is never mined for a term.
+					const cells = trimmed.split('|').map((cell) => cell.trim())
+						.filter((cell, index, all) => !(cell === '' && (index === 0 || index === all.length - 1)));
+					if (cells.length >= 2 && !/^:?-+:?$/.test(cells[0])) take(cells[0]);
+					continue;
+				}
+				const bold = /^[-*]\s+\*\*(.+?)\*\*/.exec(trimmed);
+				if (bold !== null) take(bold[1]);
+			}
+			return terms;
+		}
+
+		/**
+		 * The session's project terms as one newline-joined string — '' when the workspace
+		 * service is absent, nothing was readable, or no term was found. Never throws: the
+		 * worst outcome is a polish without project terms, which is what ran before this.
+		 */
+		async function loadGlossary(sessionId, signal) {
+			const files = runtime.workspaceFiles;
+			if (typeof files?.read !== 'function') return '';
+			const cached = glossaryCache.get(sessionId);
+			if (cached !== undefined && Date.now() - cached.at < GLOSSARY_CACHE_MS) return cached.value;
+			const seen = new Set();
+			const terms = [];
+			for (const file of GLOSSARY_FILES) {
+				// Each file owns its own deadline, so one slow read cannot spend the others' time.
+				const read = new AbortController();
+				const timer = window.setTimeout(() => read.abort(), GLOSSARY_READ_MS);
+				const stop = () => read.abort();
+				signal?.addEventListener('abort', stop, { once: true });
+				try {
+					const result = await files.read(sessionId, file, { limit: 120 }, read.signal);
+					for (const term of glossaryTerms(result?.text)) {
+						if (terms.length === MAX_GLOSSARY_TERMS) break;
+						const key = term.toLowerCase();
+						if (seen.has(key)) continue;
+						seen.add(key);
+						terms.push(term);
+					}
+				} catch (error) {
+					/* an unreadable file is one fewer source, never a failure of its own */
+				} finally {
+					window.clearTimeout(timer);
+					signal?.removeEventListener('abort', stop);
+				}
+			}
+			if (terms.length === 0) return '';
+			const value = terms.join('\n');
+			glossaryCache.set(sessionId, { at: Date.now(), value });
+			return value;
+		}
+
 		/** Every failure keeps the original. Provider error text never reaches the console. */
 		const polishTranscript = async (transcript, vocabulary, context, signal) => {
 			const model = config.get('polishModel');
@@ -631,6 +723,8 @@ window.__ModuleLoader__.load({
 			vocabularyLabel: '常用词',
 			vocabularyHint: '你常说的术语、项目名、人名，用逗号或换行分隔。润色听到发音相近的词时，会按这里的写法纠正。',
 			vocabularyPlaceholder: '例如：Claude Code, DSH, 根目录, Token',
+			glossaryLabel: '项目词表',
+			glossaryHint: '开启后，润色前自动读取当前工作区 GLOSSARY.md、CONTEXT.md、AGENTS.md 的词条（表格首列与加粗词条），与常用词合并纠正口述。词条会随润色请求发给模型服务商。',
 			polishModelLabel: '润色模型',
 			polishModelHint: '自动优先 DeepSeek 官方渠道，再按模型名称偏好轻量模型。选中的模型被移除后，会自动回到自动选择。',
 			polishModelAuto: '自动',
@@ -723,6 +817,8 @@ window.__ModuleLoader__.load({
 			vocabularyLabel: 'Vocabulary',
 			vocabularyHint: 'Terms, project names and people you often say, separated by commas or new lines. When polish hears something that sounds like one, it uses your spelling.',
 			vocabularyPlaceholder: 'e.g. Claude Code, DSH, Kubernetes, Token',
+			glossaryLabel: 'Project glossary',
+			glossaryHint: 'Before polishing, terms (first table column and bolded items) are read from the workspace GLOSSARY.md, CONTEXT.md and AGENTS.md and merged with your vocabulary. The terms are sent to the polish model\'s provider.',
 			polishModelLabel: 'Polish model',
 			polishModelHint: 'Auto prefers official DeepSeek channels, then light models by name. If the chosen model is removed, polish goes back to auto.',
 			polishModelAuto: 'Auto',
@@ -1917,6 +2013,16 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 						onChange: (event) => config.set('vocabulary', event.target.value),
 					}),
 				) : null,
+				values.polish ? row(
+					'glossary', t('glossaryLabel'), t('glossaryHint'),
+					h('button', {
+						type: 'button', className: 'dsh-htt-set-toggle',
+						'aria-pressed': values.glossary ? 'true' : 'false',
+						'aria-label': t('glossaryLabel'),
+						'data-on': values.glossary ? '' : undefined,
+						onClick: () => config.set('glossary', !values.glossary),
+					}, t(values.glossary ? 'switchOn' : 'switchOff')),
+				) : null,
 				row(
 					'chord',
 					t('chordLabel'),
@@ -2792,7 +2898,14 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 							const draft = latest.current.input?.draft;
 							const context = typeof draft === 'string' && span && span.start > 0
 								? draft.slice(Math.max(0, span.start - 600), span.start) : '';
-							const polished = await polishTranscript(transcript, config.get('vocabulary'), context, abort.signal);
+							// Project terms from the current workspace join behind the user's own
+							// vocabulary, so the user's spelling wins both the dedupe and the cap.
+							let vocabulary = config.get('vocabulary');
+							if (config.get('glossary') && typeof latest.current.props.sessionId === 'string' && latest.current.props.sessionId !== '') {
+								const project = await loadGlossary(latest.current.props.sessionId, abort.signal);
+								vocabulary = project === '' ? vocabulary : `${vocabulary}\n${project}`;
+							}
+							const polished = await polishTranscript(transcript, vocabulary, context, abort.signal);
 							if (run !== state.run) return;
 							state.busy = false;
 							if (polished.text === null) polishMissed = polished.reason || 'model-error';
@@ -3379,6 +3492,13 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 					});
 				})();
 			});
+			// `remote.workspaceFiles` is a namespaced service some Hosts do not provide, and it
+			// is kept out of the speech injection below: when the namespace never appears this
+			// callback never runs, and polish simply runs without project terms.
+			ctx.inject(['remote.workspaceFiles'], (scope) => {
+				runtime.workspaceFiles = scope.remote.workspaceFiles;
+				scope.effect(() => () => { runtime.workspaceFiles = null; });
+			});
 			// `remote.speech` is mounted by the experimental voice-input plugin; if that
 			// bundle is off the namespace is absent and this callback never runs, so the
 			// composer simply keeps its normal behaviour.
@@ -3396,8 +3516,9 @@ registerProcessor('dsh-dictation-pcm', DictationPCM);
 								id: ENTRY,
 								order: 50,
 								locale: NS,
-								inject: () => ({
+								inject: (sessionId) => ({
 									transcribe: (request, signal) => scope.remote.speech.transcribe(request, signal),
+									sessionId,
 								}),
 							},
 							HoldToTalk,
